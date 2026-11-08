@@ -1288,7 +1288,7 @@ function registerHandlers(): void {
       options.presenterDisplayId,
       primary,
     );
-    const openSpeakerView = shouldOpenSpeakerView(
+    const openSpeakerView = !options.slidesOnly && shouldOpenSpeakerView(
       audienceDisplay,
       presenterDisplay,
       options.speakerView,

@@ -73,7 +73,7 @@ describe.skipIf(!electronBinary || process.platform === 'win32')('switching disp
   }, 30_000);
 
   /** The app on two displays, presenting: the projector's audience and the laptop's Speaker View. */
-  async function startShow(name: string): Promise<{ editor: Cdp; projectorWindow: Cdp; laptopWindow: Cdp }> {
+  async function startShow(name: string, mode: 'extended' | 'mirrored' | 'slides-only' = 'extended'): Promise<{ editor: Cdp; projectorWindow: Cdp; laptopWindow: Cdp }> {
     workDir = await mkdtemp(join(tmpdir(), `${name}-`));
     const appDir = join(workDir, 'app');
     const profileDir = join(workDir, 'electron-profile');
@@ -88,7 +88,7 @@ describe.skipIf(!electronBinary || process.platform === 'win32')('switching disp
     const app = await launchDesktopApp(appDir, [deckDir], {
       profileDir,
       cwd: appDir,
-      env: { DECKWERK_TEST_DISPLAYS: '2' },
+      env: { DECKWERK_TEST_DISPLAYS: mode === 'mirrored' ? 'mirrored' : '2' },
     });
     appProcess = app.process;
     debugPort = app.debugPort;
@@ -107,13 +107,16 @@ describe.skipIf(!electronBinary || process.platform === 'win32')('switching disp
     );
 
     // Two displays: Present opens the audience and Speaker View together.
-    await editor.clickByText('button', 'Present', 'Present');
+    if (mode === 'slides-only') {
+      await editor.click('[aria-label="Presentation options"]');
+      await editor.clickByText('button', 'Present slides only', 'Present slides only');
+    } else await editor.clickByText('button', 'Present', 'Present');
     const projectorWindow = await connect((await findTarget(
       app.debugPort,
       (candidate) => candidate.url.includes('/present/index.html'),
       app.log,
     )).webSocketDebuggerUrl!);
-    const laptopWindow = await connect((await findTarget(
+    const laptopWindow = mode !== 'extended' ? projectorWindow : await connect((await findTarget(
       app.debugPort,
       (candidate) => candidate.url.includes('/presenter/index.html'),
       app.log,
@@ -123,6 +126,12 @@ describe.skipIf(!electronBinary || process.platform === 'win32')('switching disp
       'the audience window did not paint its first slide',
       (ids) => ids.length === 1 && ids[0] === 't1',
     );
+    if (mode !== 'extended') {
+      const targets = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json() as { url: string }[];
+      expect(targets.some((target) => target.url.includes('/presenter/index.html'))).toBe(false);
+      await eventually(() => projectorWindow.evaluate<boolean>(`document.querySelector('.annotation-toolbar')?.hidden === false`), 'slides-only annotation controls were hidden');
+      return { editor, projectorWindow, laptopWindow };
+    }
     await projectorWindow.key('ArrowRight', ARROW_RIGHT);
     await projectorWindow.key('ArrowRight', ARROW_RIGHT);
     await eventually(
@@ -134,6 +143,12 @@ describe.skipIf(!electronBinary || process.platform === 'win32')('switching disp
     expect(await laptopWindow.evaluate<boolean>(`!!document.querySelector('footer .annotation-toolbar')`)).toBe(true);
     return { editor, projectorWindow, laptopWindow };
   }
+
+  it.each(['mirrored', 'slides-only'] as const)('%s keeps audience slides visible without Speaker View covering them', async (mode) => {
+    const { projectorWindow } = await startShow(`present-${mode}`, mode);
+    await projectorWindow.key('ArrowRight', ARROW_RIGHT);
+    await eventually(() => projectorWindow.evaluate<string[]>(SHOWN), 'slides-only navigation failed', (ids) => ids.length === 1 && ids[0] === 't2');
+  }, 180_000);
 
   it('trades the two windows\' pages and carries the show on from the same slide', async () => {
     const { editor, projectorWindow, laptopWindow } = await startShow('present-switch-displays');

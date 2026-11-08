@@ -1,4 +1,5 @@
 import { screen, type Display } from 'electron';
+import { distinctPresentationDisplays } from './presentationDisplays.js';
 
 /**
  * The displays a presentation can use, with one seam for integration tests.
@@ -12,8 +13,12 @@ import { screen, type Display } from 'electron';
  */
 export function presentationScreens(): { displays: Display[]; primary: Display } {
   const primary = screen.getPrimaryDisplay();
+  if (process.env['DECKWERK_TEST_DISPLAYS'] === 'mirrored') {
+    const clone = { ...primary, id: primary.id + 1, internal: false };
+    return { displays: distinctPresentationDisplays([primary, clone], primary), primary };
+  }
   if (process.env['DECKWERK_TEST_DISPLAYS'] !== '2') {
-    return { displays: screen.getAllDisplays(), primary };
+    return { displays: distinctPresentationDisplays(screen.getAllDisplays(), primary), primary };
   }
   const { x, y, width, height } = primary.bounds;
   const half = Math.floor(width / 2);

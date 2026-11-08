@@ -1,3 +1,19 @@
+/** X11 can report cloned outputs as separate IDs at the same desktop origin.
+ * One audience window is mirrored by the OS; a second Speaker View covers it.
+ * Keep the primary representative so remembered IDs fall back consistently.
+ */
+export function distinctPresentationDisplays<T extends { id: number; bounds: { x: number; y: number } }>(
+  displays: T[], primary: T,
+): T[] {
+  const seen = new Set<string>();
+  return [primary, ...displays.filter((display) => display.id !== primary.id)].filter((display) => {
+    const key = `${display.bounds.x},${display.bounds.y}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Pick a projector when available, otherwise present on the laptop display. */
 export function chooseAudienceDisplay<T extends { id: number }>(
   displays: T[],

@@ -250,6 +250,8 @@ export interface DisplayInfo {
 }
 
 export interface PresentOptions {
+  /** Show only audience slides, suppressing automatic Speaker View. */
+  slidesOnly?: boolean;
   audienceDisplayId?: number;
   presenterDisplayId?: number;
   /** Open Speaker View even when audience and presenter resolve to one display. */

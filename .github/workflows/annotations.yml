@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
     paths:
+      - 'src/main/displays.ts'
+      - 'src/main/presentationDisplays.ts'
+      - 'src/main/index.ts'
+      - 'src/renderer/editor/main.ts'
+      - 'test/presentationDisplays.test.ts'
+      - 'test/presentSwitchDisplaysBrowser.test.ts'
       - 'src/renderer/player/annotation*'
       - 'src/renderer/player/liveInk.ts'
       - 'src/renderer/editor/canvas.ts'
@@ -39,7 +45,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - name: Pen settings and presenter component tests
-        run: npx vitest run test/annotationTools.test.ts test/speakerView.test.ts test/liveInk.test.ts test/pathShapeCanvas.test.ts test/linuxSandbox.test.ts
+        run: npx vitest run test/annotationTools.test.ts test/speakerView.test.ts test/liveInk.test.ts test/pathShapeCanvas.test.ts test/linuxSandbox.test.ts test/presentationDisplays.test.ts
       - name: Configure Electron sandbox
         run: |
           # Exercise the same exact-path AppArmor setup shipped to Ubuntu users.

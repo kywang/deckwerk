@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   chooseAudienceDisplay,
+  distinctPresentationDisplays,
   chooseDisplayById,
   shouldOpenSpeakerView,
   shouldShowAudienceWindow,
@@ -8,6 +9,15 @@ import {
 } from '../src/main/presentationDisplays.js';
 
 describe('presenter display placement', () => {
+  it('treats cloned outputs as one presentation surface even with different resolutions', () => {
+    const laptop = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 } };
+    const mirror = { id: 2, bounds: { x: 0, y: 0, width: 2560, height: 1440 } };
+    const extended = { id: 3, bounds: { x: -1920, y: 0, width: 1920, height: 1080 } };
+    expect(distinctPresentationDisplays([mirror, laptop], laptop)).toEqual([laptop]);
+    expect(distinctPresentationDisplays([mirror, laptop, extended], laptop)).toEqual([laptop, extended]);
+    expect(shouldOpenSpeakerView(chooseAudienceDisplay(distinctPresentationDisplays([mirror, laptop], laptop), laptop), laptop)).toBe(false);
+  });
+
   it('uses an external display for the audience', () => {
     const laptop = { id: 1, name: 'laptop' };
     const projector = { id: 2, name: 'projector' };

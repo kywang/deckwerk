@@ -658,7 +658,10 @@ function buildToolbar(): void {
     createToolbarSplitButton(
       'Present',
       () => void startPresentation(),
-      [{ label: 'Present in Speaker View', action: () => void startPresentation(true) }],
+      [
+        { label: 'Present slides only', action: () => void startPresentation(false, true) },
+        { label: 'Present in Speaker View', action: () => void startPresentation(true) },
+      ],
       { variant: 'primary', menuLabel: 'Presentation options' },
     ),
   );
@@ -668,7 +671,7 @@ function buildToolbar(): void {
   installResponsiveToolbar(bar);
 }
 
-async function startPresentation(speakerView = false): Promise<void> {
+async function startPresentation(speakerView = false, slidesOnly = false): Promise<void> {
   await runOperation('Preparing presentation…', async (operation) => {
     // Presentation reads the main process's in-memory session. When the deck
     // is dirty, mirror that state directly rather than making window creation
@@ -692,6 +695,7 @@ async function startPresentation(speakerView = false): Promise<void> {
       operation.update('Opening presentation windows');
       await window.api.present(range?.start ?? slideIndex, {
         speakerView,
+        slidesOnly,
         endSlideIndex: range?.end,
       });
     } finally {

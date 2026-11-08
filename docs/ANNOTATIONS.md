@@ -75,3 +75,14 @@ On Linux, if the digitizer reports stylus contacts as touch, select **Pen** in
 presentation mode (or **Pencil** in the editor). Touch contacts then draw ink;
 Navigate mode retains ordinary touch navigation. Holding still still activates
 the temporary laser in presentation mode.
+
+### Mirrored displays on Linux
+
+Mirrored outputs at the same desktop position share one full-screen audience
+window. The operating system displays that window on both screens. Use the
+regular **Present** button, rather than **Present in Speaker View**.
+
+You can also choose **Present → Present slides only** from the button's menu
+to suppress automatic Speaker View. Exit the running show first if changing
+presentation mode. Pen, color, width and laser controls remain on the slide
+window in this mode.

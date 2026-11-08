@@ -213,6 +213,8 @@ export type AgentSessionState = AgentSessionConnection | { active: false };
 export type { AgentContextDraft, AgentRequest, AgentResponse };
 
 export interface AnnotationOverlay {
+  /** Live stroke delta; omitted for a full preview or a clear. */
+  stroke?: { id: string; offset: number };
   pen?: { color: string; width: number };
   slideId: string;
   laser: { x: number; y: number } | null;

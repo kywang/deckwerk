@@ -192,7 +192,19 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
     event.stopPropagation();
   });
 
+  const previewStates = new WeakMap<HTMLElement, { slide: Deck['slides'][number]; step: number; width: number; height: number }>();
   function preview(target: HTMLElement, slideIndex: number, step = 0): void {
+    const slide = deck?.slides[slideIndex];
+    const previous = previewStates.get(target);
+    const existing = target.querySelector<HTMLElement>('.stage');
+    if (slide && previous?.slide === slide && previous.step === step && existing) {
+      const bounds = target.getBoundingClientRect();
+      if (bounds.width !== previous.width || bounds.height !== previous.height) {
+        applyStageScale(existing, deck!, { w: bounds.width, h: bounds.height });
+        previous.width = bounds.width; previous.height = bounds.height;
+      }
+      return;
+    }
     // Every advance throws this preview away and builds another. A video still
     // waiting for its poster frame is held by the module's global capture map,
     // which would keep the whole discarded subtree alive — one leaked stage per
@@ -200,7 +212,6 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
     releasePreviewVideos(target);
     if (target === currentHost && annotationTools) target.querySelector('.stage')?.remove();
     else target.replaceChildren();
-    const slide = deck?.slides[slideIndex];
     if (!slide) return;
     const stage = document.createElement('div');
     stage.className = 'stage';
@@ -219,6 +230,7 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
     // particular, the next slide is warm before it becomes current, so moving
     // through a video-heavy deck never opens on an undecoded black frame.
     freezePreviewVideos(stage);
+    previewStates.set(target, { slide, step, width: bounds.width, height: bounds.height });
   }
 
   function render(): void {
@@ -303,6 +315,7 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
   }
 
   function showOverview(mode: 'closed' | 'rail' | 'grid'): void {
+    if (mode !== overviewMode) annotationTools?.reset();
     overviewMode = mode;
     overview.hidden = mode === 'closed';
     host.classList.toggle('overview-open', mode === 'rail');
@@ -316,6 +329,7 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
     else overview.removeAttribute('aria-modal');
     if (mode === 'closed') {
       clearOverview();
+      render();
       slidesButton.focus();
       return;
     }
@@ -350,11 +364,19 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
     }
   }
 
+  let clockMinute = Number.NaN;
+  function updateText(node: HTMLElement, value: string): void {
+    if (node.textContent !== value) node.textContent = value;
+  }
   function tick(): void {
     const stamp = now();
-    presentationTimer.textContent = formatElapsed(stamp, state.startedAt);
-    slideTimer.textContent = formatElapsed(stamp, state.slideStartedAt);
-    wallClock.textContent = formatWallClock(new Date(stamp));
+    updateText(presentationTimer, formatElapsed(stamp, state.startedAt));
+    updateText(slideTimer, formatElapsed(stamp, state.slideStartedAt));
+    const minute = Math.floor(stamp / 60_000);
+    if (minute !== clockMinute) {
+      updateText(wallClock, formatWallClock(new Date(stamp)));
+      clockMinute = minute;
+    }
   }
 
   const send = (command: PresentationCommand) => () => onCommand(command);
@@ -372,6 +394,7 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
 
   return {
     setDeck(next) {
+      previewStates.delete(currentHost); previewStates.delete(nextHost);
       commitNotes();
       deck = next;
       if (next) prepareCodeBlocks(next);
@@ -391,6 +414,7 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
       tick();
     },
     refresh() {
+      previewStates.delete(currentHost); previewStates.delete(nextHost);
       render();
       if (!deck || overview.hidden) return;
       for (const thumbnail of overviewList.querySelectorAll<HTMLElement>('.preview')) {

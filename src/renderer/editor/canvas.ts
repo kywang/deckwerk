@@ -1,3 +1,4 @@
+import { LiveInk } from '../player/liveInk.js';
 import { openContextMenu } from './contextMenuPlacement.js';
 import type { Deck, ShapeEl, Slide, SlideElement, TextEl } from '@shared/deck.js';
 import { NEW_MEDIA_FIT } from '@shared/deck.js';
@@ -1181,6 +1182,9 @@ export class EditorCanvas {
    * stroke becomes its own path when the pointer lifts, and the pencil stays
    * out for the next one until Escape, Return or the button puts it down.
    */
+  private pencilFrame: number | null = null;
+  private pencilProjection: { left: number; top: number; scale: number } | null = null;
+  private pencilPreview: { svg: SVGSVGElement; ink: LiveInk; count: number } | null = null;
   private pencilPointerId: number | null = null;
   private pencil: { slideId: string; stroke: XY[] | null } | null = null;
   /** Notified when the pen or the pencil is taken up or put down, so the toolbar can show it. */
@@ -2039,6 +2043,7 @@ export class EditorCanvas {
   }
 
   private rescale(): void {
+    this.pencilProjection = null;
     const { deck } = this.store.get();
     const r = this.viewportRect();
     if (r.width === 0 || r.height === 0) return;
@@ -2841,7 +2846,14 @@ export class EditorCanvas {
 
     if (this.pen) frag.appendChild(penOverlay(this.pen, this.scale, deck.canvas));
     if (this.pencil?.stroke) {
-      frag.appendChild(pencilOverlay(this.pencil.stroke, newObjectColors(deck).stroke, deck.canvas));
+      if (!this.pencilPreview) {
+        const svg = pencilOverlay([], newObjectColors(deck).stroke, deck.canvas);
+        this.pencilPreview = { svg, ink: new LiveInk(svg.querySelector('path')!), count: 0 };
+      }
+      const preview = this.pencilPreview;
+      preview.ink.append(this.pencil.stroke.slice(preview.count));
+      preview.count = this.pencil.stroke.length;
+      frag.appendChild(preview.svg);
     }
     if (this.pathEdit) {
       const edited = elements.find((el) => el.id === this.pathEdit!.elementId);
@@ -2888,8 +2900,13 @@ export class EditorCanvas {
 
   /** Screen point -> canvas point. */
   private toCanvas(ev: MouseEvent): { x: number; y: number } {
-    const r = this.stage.getBoundingClientRect();
-    return { x: (ev.clientX - r.left) / this.scale, y: (ev.clientY - r.top) / this.scale };
+    if (this.pencil?.stroke && !this.pencilProjection) {
+      const rect = this.stage.getBoundingClientRect();
+      this.pencilProjection = { left: rect.left, top: rect.top, scale: this.scale };
+    }
+    const r = this.pencilProjection ?? this.stage.getBoundingClientRect();
+    const scale = this.pencilProjection?.scale ?? this.scale;
+    return { x: (ev.clientX - r.left) / scale, y: (ev.clientY - r.top) / scale };
   }
 
   private bindPointer(): void {
@@ -2925,6 +2942,7 @@ export class EditorCanvas {
     this.host.addEventListener('pointercancel', (ev) => {
       if (this.endViewportPan(ev)) return;
       if (this.pencilPointerId === ev.pointerId) {
+        this.clearPencilPreview();
         this.pencilPointerId = null;
         if (this.pencil) this.pencil.stroke = null;
         this.redrawOverlay();
@@ -2933,6 +2951,7 @@ export class EditorCanvas {
     });
     this.host.addEventListener('lostpointercapture', (ev) => {
       if (this.pencilPointerId !== ev.pointerId) return;
+      this.clearPencilPreview();
       this.pencilPointerId = null;
       if (this.pencil) this.pencil.stroke = null;
       this.redrawOverlay();
@@ -3042,6 +3061,9 @@ export class EditorCanvas {
       return;
     }
     if (this.pencil) {
+      this.clearPencilPreview();
+      const rect = this.stage.getBoundingClientRect();
+      this.pencilProjection = { left: rect.left, top: rect.top, scale: this.scale };
       this.pencilPointerId = ev.pointerId;
       this.pencil.stroke = [point];
       this.redrawOverlay();
@@ -3303,9 +3325,19 @@ export class EditorCanvas {
       if (stroke && !isHoverMove(ev)) {
         // Every sample the pointer reported since the last frame, so a quick
         // stroke keeps its shape.
-        const samples = ev.getCoalescedEvents?.() ?? [];
-        for (const sample of samples.length > 0 ? samples : [ev]) stroke.push(this.toCanvas(sample));
-        this.redrawOverlay();
+        const samples = [...ev.getCoalescedEvents?.() ?? []];
+        const last = samples.at(-1);
+        if (!last || last.clientX !== ev.clientX || last.clientY !== ev.clientY) samples.push(ev);
+        for (const sample of samples) stroke.push(this.toCanvas(sample));
+        if (this.pencilFrame === null) this.pencilFrame = requestAnimationFrame(() => {
+          this.pencilFrame = null;
+          const current = this.pencil?.stroke;
+          if (!current) return;
+          const preview = this.pencilPreview;
+          if (!preview?.svg.isConnected) { this.redrawOverlay(); return; }
+          preview.ink.append(current.slice(preview.count));
+          preview.count = current.length;
+        });
       }
       return;
     }
@@ -3815,10 +3847,11 @@ export class EditorCanvas {
     }
     if (this.pencil) {
       const stroke = this.pencil.stroke;
+      if (stroke) stroke.push(this.toCanvas(ev));
+      this.clearPencilPreview();
       this.pencil.stroke = null;
       this.pencilPointerId = null;
       this.host.releasePointerCapture?.(ev.pointerId);
-      if (stroke) stroke.push(this.toCanvas(ev));
       if (stroke) this.finishPencilStroke(stroke);
       this.redrawOverlay();
       return;
@@ -4164,9 +4197,18 @@ export class EditorCanvas {
     this.notice('');
   }
 
+  private clearPencilPreview(): void {
+    if (this.pencilFrame !== null) cancelAnimationFrame(this.pencilFrame);
+    this.pencilFrame = null;
+    this.pencilProjection = null;
+    this.pencilPreview?.svg.remove();
+    this.pencilPreview = null;
+  }
+
   /** Put the pencil down; a stroke still under the pointer is dropped. */
   private endPencil(): void {
     if (!this.pencil) return;
+    this.clearPencilPreview();
     this.pencil = null;
     const pointerId = this.pencilPointerId;
     this.pencilPointerId = null;

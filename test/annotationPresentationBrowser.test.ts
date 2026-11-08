@@ -46,6 +46,37 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
       const target = await findTarget(app.debugPort, isEditorTarget, app.log);
       editor = await Cdp.connect(target.webSocketDebuggerUrl!); connections.push(editor);
       await eventually(() => editor!.evaluate<boolean>(`document.querySelectorAll('.rail-item').length === 2`), 'editor did not load');
+      if (backend === 'desktop') {
+        await editor.call('Emulation.setCPUThrottlingRate', { rate: 6 });
+        await editor.evaluate(`(() => {
+          const stage = document.querySelector('.canvas-host .stage');
+          const read = stage.getBoundingClientRect.bind(stage);
+          window.editorInkBudget = { layoutReads: 0, overlayReplacements: 0 };
+          stage.getBoundingClientRect = () => { window.editorInkBudget.layoutReads++; return read(); };
+          window.restoreEditorInkRead = () => { stage.getBoundingClientRect = read; };
+          window.editorInkObserver = new MutationObserver(records => { window.editorInkBudget.overlayReplacements += records.length; });
+          window.editorInkObserver.observe(document.querySelector('.overlay-layer'), { childList: true });
+        })()`);
+        try {
+          const area = await editor.evaluate<{ x: number; y: number; width: number; height: number }>(`(() => { const r = document.querySelector('.canvas-host .stage').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`);
+          await editor.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: area.x + area.width * .2, y: area.y + area.height * .3, pointerType: 'pen', button: 'left', buttons: 1, clickCount: 1 });
+          await editor.evaluate('window.editorInkBudget = { layoutReads: 0, overlayReplacements: 0 }');
+          for (let sample = 1; sample <= 120; sample++) await editor.call('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', x: area.x + area.width * (.2 + sample / 240),
+            y: area.y + area.height * (.3 + Math.sin(sample / 10) / 20), pointerType: 'pen', button: 'left', buttons: 1,
+          });
+          await editor.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+          const budget = await editor.evaluate<{ layoutReads: number; overlayReplacements: number }>('window.editorInkBudget');
+          await writeFile(join(tmpdir(), 'deckwerk-editor-ink-budget.json'), JSON.stringify({ ...budget, inputMoves: 120, cpuThrottling: 6 }, null, 2));
+          expect(budget.layoutReads).toBeLessThanOrEqual(5);
+          expect(budget.overlayReplacements, 'a stroke must retain its live overlay').toBeLessThanOrEqual(5);
+          await editor.key('Escape', 27);
+          await editor.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: area.x + area.width * .7, y: area.y + area.height * .3, pointerType: 'pen', button: 'left', buttons: 0, clickCount: 1 });
+        } finally {
+          await editor.call('Emulation.setCPUThrottlingRate', { rate: 1 });
+          await editor.evaluate('window.editorInkObserver.disconnect(); window.restoreEditorInkRead();');
+        }
+      }
       if (withSpeaker) await editor.evaluate('window.api.present(0, { speakerView: true })');
       else await editor.evaluate(`(async () => { const display = (await window.api.listDisplays()).find((d) => d.primary); await window.api.present(0, { audienceDisplayId: display.id, presenterDisplayId: display.id }); })()`);
       const present = await findTarget(app.debugPort, (t) => t.url.includes('/present/index.html'), app.log);
@@ -92,6 +123,42 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
     expect(await driver.pressOptionKey('[aria-label="Pen color"]', 'b')).toBe('#1976d2');
     await driver.choose('[aria-label="Pen width"]', '12');
     await driver.click('[data-annotation-mode="pen"]');
+    if (backend === 'browser-speaker') {
+      // Real CDP stylus input, with the renderer throttled to model a low-power tablet.
+      await driver.call('Emulation.setCPUThrottlingRate', { rate: 6 });
+      await driver.evaluate(`(() => {
+        window.inkBudget = { points: 0, messages: 0 };
+        window.originalInkPost = BroadcastChannel.prototype.postMessage;
+        BroadcastChannel.prototype.postMessage = function(message) {
+          if (message.kind === 'command' && message.command?.type === 'annotationOverlay') {
+            window.inkBudget.points += message.command.overlay.points.length;
+            window.inkBudget.messages++;
+          }
+          return window.originalInkPost.call(this, message);
+        };
+      })()`);
+      try {
+        await driver.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...points[0], pointerType: 'pen', button: 'left', buttons: 1, clickCount: 1 });
+        for (let sample = 1; sample <= 120; sample++) {
+          await driver.call('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', x: points[0].x + rect.width * sample / 240,
+            y: points[0].y + rect.height * Math.sin(sample / 10) / 20,
+            pointerType: 'pen', button: 'left', buttons: 1,
+          });
+        }
+        await driver.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+        const budget = await driver.evaluate<{ points: number; messages: number }>('window.inkBudget');
+        await writeFile(join(tmpdir(), 'deckwerk-ink-budget.json'), JSON.stringify({ ...budget, inputMoves: 120, cpuThrottling: 6 }, null, 2));
+        expect(budget.points, 'mirroring must send new samples rather than replay the entire stroke').toBeLessThanOrEqual(480);
+        expect(budget.points).toBeGreaterThan(100);
+        await driver.key('Escape', 27);
+        await driver.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...points[0], pointerType: 'pen', button: 'left', buttons: 0, clickCount: 1 });
+        await driver.click('[data-annotation-mode="pen"]');
+      } finally {
+        await driver.call('Emulation.setCPUThrottlingRate', { rate: 1 });
+        await driver.evaluate('BroadcastChannel.prototype.postMessage = window.originalInkPost; delete window.originalInkPost;');
+      }
+    }
     // A real held stylus, followed by a held finger: neither may save ink or
     // advance the slide, and releasing each restores the selected Pen tool.
     for (const input of ['pen', 'touch']) {

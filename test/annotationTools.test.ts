@@ -8,12 +8,26 @@ import { createAnnotationTools, PEN_COLORS, PEN_WIDTHS } from '../src/renderer/p
 import { buildPrintPages } from '../src/renderer/print/pages.js';
 import { installCanvasDomShims } from './support/canvasHarness.js';
 
-beforeEach(() => localStorage.removeItem('deckwerk.annotation.pen'));
+const originalFrame = window.requestAnimationFrame;
+const originalCancelFrame = window.cancelAnimationFrame;
+let frames = new Map<number, FrameRequestCallback>();
+let nextFrame = 1;
+const requestFrame = (callback: FrameRequestCallback): number => { const id = nextFrame++; frames.set(id, callback); return id; };
+const cancelFrame = (id: number): void => { frames.delete(id); };
+function flushFrames(): void {
+  for (let turn = 0; frames.size && turn < 10; turn++) {
+    const pending = [...frames.values()]; frames.clear();
+    for (const callback of pending) callback(performance.now());
+  }
+}
+function advance(ms: number): void { vi.advanceTimersByTime(ms); flushFrames(); }
+beforeEach(() => { localStorage.removeItem('deckwerk.annotation.pen'); frames = new Map(); nextFrame = 1; });
 let destroy: (() => void) | undefined;
-afterEach(() => { destroy?.(); destroy = undefined; vi.useRealTimers(); document.body.replaceChildren(); });
+afterEach(() => { destroy?.(); destroy = undefined; vi.useRealTimers(); window.requestAnimationFrame = originalFrame; window.cancelAnimationFrame = originalCancelFrame; document.body.replaceChildren(); });
 
 function setup(onOverlay?: (overlay: AnnotationOverlay) => void) {
   installCanvasDomShims();
+  window.requestAnimationFrame = requestFrame; window.cancelAnimationFrame = cancelFrame;
   const deck = emptyDeck('Annotated talk');
   const host = document.createElement('div');
   host.innerHTML = '<div class="stage"></div>';
@@ -28,6 +42,7 @@ function setup(onOverlay?: (overlay: AnnotationOverlay) => void) {
     const event = new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: id, button: 0, ctrlKey });
     Object.defineProperty(event, 'pointerType', { value: pointerType });
     host.dispatchEvent(event);
+    flushFrames();
     return event;
   };
   const choose = (mode: string) => host.querySelector<HTMLButtonElement>(`[data-annotation-mode="${mode}"]`)!.click();
@@ -35,6 +50,50 @@ function setup(onOverlay?: (overlay: AnnotationOverlay) => void) {
 }
 
 describe('presentation annotation tools', () => {
+  it('batches a coalesced burst without repeating layout reads or retransmitting old points', () => {
+    const updates: AnnotationOverlay[] = [];
+    const { host, pointer, save } = setup((overlay) => updates.push(overlay));
+    const stage = host.querySelector('.stage')!;
+    const reads = vi.spyOn(stage, 'getBoundingClientRect');
+    pointer('pointerdown', 100, 100, 1, 'pen');
+    updates.length = 0;
+    for (let frame = 0; frame < 20; frame++) {
+      for (let move = 0; move < 10; move++) {
+        const x = 110 + frame * 100 + move * 10;
+        const event = new PointerEvent('pointermove', { pointerId: 1, clientX: x, clientY: 200, bubbles: true });
+        Object.defineProperty(event, 'getCoalescedEvents', { value: () => Array.from({ length: 10 }, (_, i) => ({ clientX: x - 9 + i, clientY: 200 })) });
+        host.dispatchEvent(event);
+      }
+      flushFrames();
+    }
+    const strokes = updates.filter((update) => update.stroke);
+    expect(strokes).toHaveLength(20);
+    expect(strokes.reduce((total, update) => total + update.points.length, 0)).toBe(2001);
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(host.querySelectorAll('.annotation-preview path').length).toBeGreaterThan(1);
+    expect([...host.querySelectorAll('.annotation-preview path')].every((path) => (path.getAttribute('d')?.length ?? 0) < 20_000)).toBe(true);
+    pointer('pointerup', 2100, 200, 1, 'pen');
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(pathOnCanvas(save.mock.calls[0][1])![0].nodes.at(-1)?.x).toBe(1920);
+    expect(frames.size).toBe(0);
+    reads.mockRestore();
+  });
+
+  it('drops queued previews on cancel and ignores stale out-of-order stroke deltas', () => {
+    const { host, tools, pointer, save } = setup();
+    const stroke = { id: 'stream', offset: 0 };
+    tools.showOverlay({ slideId: 'slide-1', points: [{ x: 10, y: 10 }], laser: null, stroke });
+    tools.showOverlay({ slideId: 'slide-1', points: [], laser: null });
+    tools.showOverlay({ slideId: 'slide-1', points: [{ x: 20, y: 20 }], laser: null, stroke: { id: 'stream', offset: 1 } });
+    flushFrames();
+    expect(host.querySelector('.annotation-preview path')?.getAttribute('d')).toBe('');
+    pointer('pointerdown', 100, 100, 1, 'pen');
+    host.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 200, clientY: 200, bubbles: true }));
+    pointer('pointercancel', 200, 200, 1, 'pen');
+    expect(frames.size).toBe(0);
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('uses selected colour and width for the preview, saved stroke and PDF pages', () => {
     const { host, pointer, save, deck } = setup();
     const set = (label: string, value: string) => {
@@ -122,9 +181,9 @@ describe('presentation annotation tools', () => {
     choose('pen');
     const laser = host.querySelector<HTMLElement>('.presentation-laser')!;
     pointer('pointerdown', 150, 200, 1, pointerType);
-    vi.advanceTimersByTime(499);
+    advance(499);
     expect(laser.hidden).toBe(true);
-    vi.advanceTimersByTime(1);
+    advance(1);
     expect(laser.hidden).toBe(false);
     pointer('pointermove', 400, 300, 1, pointerType);
     expect(laser.style.left).toBe('400px');
@@ -149,12 +208,12 @@ describe('presentation annotation tools', () => {
     const fullscreen = vi.fn();
     host.addEventListener('dblclick', fullscreen);
     pointer('pointerdown', 100, 100, 1, 'touch');
-    vi.advanceTimersByTime(200);
+    advance(200);
     pointer('pointerup', 100, 100, 1, 'touch');
     pointer('click', 100, 100, 1, 'touch');
     expect(navigate).toHaveBeenCalledTimes(1);
     pointer('pointerdown', 100, 100, 1, 'touch');
-    vi.advanceTimersByTime(500);
+    advance(500);
     expect(host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(false);
     pointer('pointerup', 300, 200, 1, 'touch');
     pointer('click', 300, 200, 1, 'touch');
@@ -175,12 +234,12 @@ describe('presentation annotation tools', () => {
     const laser = host.querySelector<HTMLElement>('.presentation-laser')!;
     pointer('pointerdown', 100, 100, 1, 'pen');
     pointer('pointermove', 103, 104, 1, 'pen');
-    vi.advanceTimersByTime(500);
+    advance(500);
     expect(laser.hidden).toBe(false);
     pointer('pointerup', 103, 104, 1, 'pen');
     pointer('pointerdown', 100, 100, 1, 'pen');
     pointer('pointermove', 130, 120, 1, 'pen');
-    vi.advanceTimersByTime(1000);
+    advance(1000);
     expect(laser.hidden).toBe(true);
     pointer('pointerup', 200, 150, 1, 'pen');
     expect(save).toHaveBeenCalledTimes(1);
@@ -191,13 +250,13 @@ describe('presentation annotation tools', () => {
     for (const reason of ['pointerup', 'pointercancel', 'lostpointercapture', 'blur', 'tool', 'slide', 'destroy']) {
       const { host, pointer, choose, deck, next, save } = setup();
       pointer('pointerdown', 100, 100, 1, 'pen');
-      vi.advanceTimersByTime(200);
+      advance(200);
       if (reason === 'blur') window.dispatchEvent(new Event('blur'));
       else if (reason === 'tool') choose('navigate');
       else if (reason === 'slide') { deck.slides.push({ ...structuredClone(deck.slides[0]), id: 'other' }); next(); }
       else if (reason === 'destroy') destroy!();
       else pointer(reason, 100, 100, 1, 'pen');
-      vi.advanceTimersByTime(1000);
+      advance(1000);
       expect(host.querySelector<HTMLElement>('.presentation-laser')?.hidden ?? true).toBe(true);
       expect(save).not.toHaveBeenCalled();
       destroy!(); destroy = undefined;
@@ -222,17 +281,17 @@ describe('presentation annotation tools', () => {
       width.value = String(PEN_WIDTHS[seed % PEN_WIDTHS.length]); width.dispatchEvent(new Event('change'));
       pointer('pointerdown', 100, 100, 1, 'pen');
       if (action === 0) {
-        vi.advanceTimersByTime(500);
+        advance(500);
         pointer('pointermove', 500, 300, 1, 'pen');
       } else if (action === 1) {
         pointer('pointermove', 200, 150, 1, 'pen');
-        vi.advanceTimersByTime(800);
+        advance(800);
         expectedInk++;
       } else if (action === 2) pointer('pointercancel', 100, 100, 1, 'pen');
       else window.dispatchEvent(new Event('blur'));
       pointer('pointerup', 500, 300, 1, 'pen');
       pointer('click', 500, 300, 1, 'pen');
-      vi.advanceTimersByTime(600);
+      advance(600);
       expect(save).toHaveBeenCalledTimes(expectedInk);
       if (action === 1) expect(save.mock.calls.at(-1)![1]).toMatchObject({ stroke: color.value, strokeWidth: Number(width.value) });
       expect(host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(true);

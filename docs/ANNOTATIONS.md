@@ -57,3 +57,16 @@ npm run dist
 On a single display, the controls appear along the bottom of the presentation.
 With Speaker View, use the controls below the current-slide preview on your
 laptop; the audience view deliberately hides the buttons.
+
+## Drawing on lower-powered tablets
+
+Live ink is smoothed and drawn once per display frame in small, reusable SVG
+segments. The editor caches its pen-coordinate mapping for the stroke. Presenter
+View transmits only new samples to the audience display and keeps unchanged
+slide previews alive, reducing layout work, IPC traffic and media reloads.
+Coalesced stylus samples are retained for the saved vector stroke and PDF output.
+
+The Linux annotation CI includes a six-times CPU-throttled stylus regression,
+long-stroke rendering checks and editor/presentation drawing tests. It exercises
+the same code used on lower-powered devices, but cannot reproduce every tablet's
+display driver or hardware latency.

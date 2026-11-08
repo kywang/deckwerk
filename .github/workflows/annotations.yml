@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'src/renderer/player/annotation*'
+      - 'src/renderer/player/liveInk.ts'
+      - 'src/renderer/editor/canvas.ts'
+      - 'test/liveInk.test.ts'
+      - 'test/pathShapeCanvas.test.ts'
       - 'src/renderer/presenter/**'
       - 'src/shared/annotations.ts'
       - 'src/shared/ipc.ts'
@@ -30,7 +34,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - name: Pen settings and presenter component tests
-        run: npx vitest run test/annotationTools.test.ts test/speakerView.test.ts
+        run: npx vitest run test/annotationTools.test.ts test/speakerView.test.ts test/liveInk.test.ts test/pathShapeCanvas.test.ts
       - name: Configure Electron sandbox
         run: |
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
@@ -48,3 +52,5 @@ jobs:
             /tmp/deckwerk-annotations-*.png
             /tmp/deckwerk-presenter-controls-*.png
             /tmp/deckwerk-annotations-*.pdf
+            /tmp/deckwerk-ink-budget.json
+            /tmp/deckwerk-editor-ink-budget.json

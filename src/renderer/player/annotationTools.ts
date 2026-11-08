@@ -4,6 +4,8 @@ import type { XY } from '@shared/pathNodes.js';
 import type { AnnotationOverlay } from '@shared/ipc.js';
 import { button } from '../editor/ui.js';
 import { eventOnInteractiveWeb, slideLinkFromEvent } from './links.js';
+import { LiveInk } from './liveInk.js';
+import { makeId } from '@shared/geometry.js';
 import './annotationTools.css';
 
 type Mode = 'navigate' | 'pen' | 'laser';
@@ -30,6 +32,7 @@ interface PointerGesture {
   id: number; slideId: string; points: XY[]; kind: 'ink' | 'waiting' | 'laser';
   origin: XY; timer: ReturnType<typeof setTimeout> | null;
   pen: PenStyle;
+  stream: string;
 }
 export interface AnnotationToolsOptions {
   host: HTMLElement;
@@ -49,17 +52,27 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   let active: PointerGesture | null = null;
   let suppressNextClick = false;
   let pen = storedPenStyle();
+  let frame: number | null = null;
+  let painted = 0;
+  let sent = 0;
+  let laserPoint: XY | null = null;
+  let remote: AnnotationOverlay | null = null;
+  let remotePoints: XY[] = [];
+  let remoteStream: string | null = null;
+  let remotePainted = 0;
+  let projection: { left: number; top: number; width: number; height: number; hostLeft: number; hostTop: number; w: number; h: number } | null = null;
   const layer = document.createElement('div');
   layer.className = 'annotation-layer';
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.classList.add('annotation-preview');
-  const path = document.createElementNS(svg.namespaceURI, 'path');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute('fill', 'none');
   path.setAttribute('stroke', pen.color);
   path.setAttribute('stroke-width', String(pen.width));
   path.setAttribute('stroke-linecap', 'round');
   path.setAttribute('stroke-linejoin', 'round');
   svg.append(path);
+  const ink = new LiveInk(path);
   const laser = document.createElement('div');
   laser.className = 'presentation-laser';
   laser.hidden = true;
@@ -114,7 +127,12 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
     const id = active?.id;
     if (active?.timer !== null && active?.timer !== undefined) clearTimeout(active.timer);
     active = null;
-    path.removeAttribute('d');
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+    painted = sent = remotePainted = 0;
+    remote = null; remotePoints = []; remoteStream = null;
+    projection = null; laserPoint = null;
+    ink.clear();
     layer.classList.toggle('annotation-active', mode !== 'navigate');
     layer.classList.toggle('laser-active', mode === 'laser');
     laser.hidden = true;
@@ -136,44 +154,75 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   // Keep presentation navigation and fullscreen handlers away from tool clicks.
   const stop = (event: Event): void => event.stopPropagation();
   for (const type of ['pointerdown', 'pointerup', 'click', 'dblclick', 'mousedown']) toolbar.addEventListener(type, stop);
-  const position = (event: PointerEvent): XY | null => {
+  function measure() {
+    if (projection) return projection;
     const state = options.slide();
     const rect = host.querySelector('.stage')?.getBoundingClientRect();
-    if (!state || !rect || !rect.width || !rect.height) return null;
+    if (!state || !rect?.width || !rect.height) return null;
     const hostRect = host.getBoundingClientRect();
+    projection = { left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+      hostLeft: hostRect.left, hostTop: hostRect.top, w: state.canvas.w, h: state.canvas.h };
     svg.style.left = `${rect.left - hostRect.left}px`;
     svg.style.top = `${rect.top - hostRect.top}px`;
-    svg.style.width = `${rect.width}px`;
-    svg.style.height = `${rect.height}px`;
+    svg.style.width = `${rect.width}px`; svg.style.height = `${rect.height}px`;
     svg.setAttribute('viewBox', `0 0 ${state.canvas.w} ${state.canvas.h}`);
-    return {
-      x: Math.max(0, Math.min(state.canvas.w, (event.clientX - rect.left) * state.canvas.w / rect.width)),
-      y: Math.max(0, Math.min(state.canvas.h, (event.clientY - rect.top) * state.canvas.h / rect.height)),
-    };
+    return projection;
+  }
+  const position = (event: MouseEvent): XY | null => {
+    const p = measure();
+    return p ? { x: Math.max(0, Math.min(p.w, (event.clientX - p.left) * p.w / p.width)),
+      y: Math.max(0, Math.min(p.h, (event.clientY - p.top) * p.h / p.height)) } : null;
   };
   const consume = (event: Event): void => { event.preventDefault(); event.stopImmediatePropagation(); };
   const isToolEvent = (event: Event): boolean => toolbar.contains(event.target as Node);
-  function emitOverlay(point: XY | null = null): void {
+  // Clears are immediate, so a queued frame cannot resurrect a cancelled stroke.
+  function emitOverlay(): void {
     const slide = options.slide();
-    if (!slide || !options.onOverlay) return;
-    options.onOverlay({ slideId: slide.slide.id, laser: point, points: active?.kind === 'ink' ? [...active.points] : [], pen: active?.pen ?? pen });
+    if (slide && options.onOverlay) options.onOverlay({ slideId: slide.slide.id, laser: null, points: [], pen });
   }
-  const pointLaser = (point: XY): void => {
-    const rect = host.getBoundingClientRect();
-    laser.style.left = `${point.x - rect.left}px`;
-    laser.style.top = `${point.y - rect.top}px`;
-    laser.hidden = false;
-    const state = options.slide();
-    const stage = host.querySelector('.stage')?.getBoundingClientRect();
-    if (state && stage?.width && stage.height) emitOverlay({
-      x: (point.x - stage.left) * state.canvas.w / stage.width,
-      y: (point.y - stage.top) * state.canvas.h / stage.height,
+  function schedule(): void {
+    if (frame !== null) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      const state = options.slide();
+      const p = measure();
+      if (!state || !p) return;
+      if (remote) {
+        if (remote.slideId !== state.slide.id) { ink.clear(); laser.hidden = true; return; }
+        ink.append(remotePoints.slice(remotePainted));
+        remotePainted = remotePoints.length;
+        laser.hidden = !remote.laser;
+        if (remote.laser) {
+          laser.style.left = `${p.left - p.hostLeft + remote.laser.x * p.width / p.w}px`;
+          laser.style.top = `${p.top - p.hostTop + remote.laser.y * p.height / p.h}px`;
+        }
+      } else if (active?.kind === 'ink') {
+        if (state.slide.id !== active.slideId) { cancel(); return; }
+        ink.append(active.points.slice(painted));
+        painted = active.points.length;
+        if (options.onOverlay && sent < painted) {
+          options.onOverlay({ slideId: active.slideId, points: active.points.slice(sent),
+            stroke: { id: active.stream, offset: sent }, laser: null, pen: active.pen });
+          sent = painted;
+        }
+      } else if (laserPoint) {
+        laser.style.left = `${laserPoint.x - p.hostLeft}px`;
+        laser.style.top = `${laserPoint.y - p.hostTop}px`;
+        laser.hidden = false;
+        options.onOverlay?.({ slideId: state.slide.id, points: [], pen,
+          laser: { x: (laserPoint.x - p.left) * p.w / p.width, y: (laserPoint.y - p.top) * p.h / p.height } });
+      }
     });
-  };
+  }
+  const pointLaser = (point: XY): void => { laserPoint = point; schedule(); };
   const down = (event: PointerEvent): void => {
     if (isToolEvent(event) || event.button !== 0) return;
     if (active) { consume(event); return; }
     suppressNextClick = false;
+    if (remote) {
+      remote = null; remotePoints = []; remoteStream = null; remotePainted = 0;
+      painted = sent = 0; projection = null; ink.clear();
+    }
     if (mode === 'laser' || event.ctrlKey) { consume(event); move(event); return; }
     if (mode === 'navigate' && (slideLinkFromEvent(event) || eventOnInteractiveWeb(event)
         || (event.target instanceof Element && event.target.closest('button, input, textarea, select, [contenteditable="true"]')))) return;
@@ -188,9 +237,10 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
     const draft: PointerGesture = {
       id: event.pointerId, slideId: state.slide.id, points: [point], kind: drawing ? 'ink' : 'waiting',
       origin: { x: event.clientX, y: event.clientY }, timer: null,
-      pen: { ...pen },
+      pen: { ...pen }, stream: makeId('ink-live'),
     };
     active = draft;
+    laserPoint = null; laser.hidden = true;
     path.setAttribute('stroke', draft.pen.color);
     path.setAttribute('stroke-width', String(draft.pen.width));
     if (drawing) host.setPointerCapture(event.pointerId);
@@ -200,7 +250,7 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
       if (options.slide()?.slide.id !== draft.slideId) { cancel(); return; }
       draft.kind = 'laser';
       draft.points = [];
-      path.removeAttribute('d');
+      ink.clear();
       suppressNextClick = true;
       host.setPointerCapture(draft.id);
       layer.classList.add('annotation-active', 'laser-active');
@@ -216,7 +266,9 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
         pointLaser({ x: event.clientX, y: event.clientY });
         return;
       }
-      const samples = event.getCoalescedEvents?.() ?? [];
+      const samples = [...event.getCoalescedEvents?.() ?? []];
+      const last = samples.at(-1);
+      if (!last || last.clientX !== event.clientX || last.clientY !== event.clientY) samples.push(event);
       for (const sample of samples.length ? samples : [event]) {
         if (Math.hypot(sample.clientX - active.origin.x, sample.clientY - active.origin.y) > HOLD_SLOP_PX) {
           if (active.timer !== null) clearTimeout(active.timer);
@@ -229,12 +281,11 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
       }
       if (active.kind === 'waiting') return;
       consume(event);
-      path.setAttribute('d', active.points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' '));
-      emitOverlay();
+      schedule();
     } else if (!isToolEvent(event) && (mode === 'laser' || event.ctrlKey)) {
       consume(event);
       pointLaser({ x: event.clientX, y: event.clientY });
-    } else laser.hidden = true;
+    } else { laserPoint = null; laser.hidden = true; }
   };
   const up = (event: PointerEvent): void => {
     if (!active || event.pointerId !== active.id) return;
@@ -263,8 +314,9 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   };
   const leave = (): void => {
     if (active?.kind === 'waiting') cancel();
-    laser.hidden = true;
-    emitOverlay();
+    laserPoint = null; laser.hidden = true;
+    projection = null;
+    if (!active || active.kind !== 'ink') emitOverlay();
   };
   const keyup = (event: KeyboardEvent): void => { if (event.key === 'Control' && mode !== 'laser') leave(); };
   const blur = (): void => { cancel(); leave(); };
@@ -282,29 +334,31 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   window.addEventListener('keydown', key, true);
   window.addEventListener('keyup', keyup, true);
   window.addEventListener('blur', blur);
+  window.addEventListener('resize', blur);
   return {
     reset: cancel,
     setToolbarVisible(visible) { toolbar.hidden = !visible; },
     showOverlay(overlay) {
-      path.removeAttribute('d');
-      laser.hidden = true;
       const state = options.slide();
-      const rect = host.querySelector('.stage')?.getBoundingClientRect();
-      if (!state || state.slide.id !== overlay.slideId || !rect?.width || !rect.height) return;
-      const bounds = host.getBoundingClientRect();
-      svg.style.left = `${rect.left - bounds.left}px`; svg.style.top = `${rect.top - bounds.top}px`;
-      svg.style.width = `${rect.width}px`; svg.style.height = `${rect.height}px`;
-      svg.setAttribute('viewBox', `0 0 ${state.canvas.w} ${state.canvas.h}`);
+      if (!state || state.slide.id !== overlay.slideId) { cancel(); return; }
+      if (!overlay.points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) return;
+      if (overlay.laser && (!Number.isFinite(overlay.laser.x) || !Number.isFinite(overlay.laser.y))) return;
+      if (overlay.stroke) {
+        if (overlay.stroke.offset === 0 && remoteStream !== overlay.stroke.id) {
+          ink.clear(); remotePoints = []; remotePainted = 0; remoteStream = overlay.stroke.id;
+        }
+        if (remoteStream !== overlay.stroke.id || overlay.stroke.offset !== remotePoints.length) return;
+        for (const point of overlay.points) remotePoints.push(point);
+      } else {
+        ink.clear(); remotePoints = [...overlay.points]; remotePainted = 0; remoteStream = null;
+      }
+      remote = overlay;
       path.setAttribute('stroke', /^#[0-9a-f]{6}$/i.test(overlay.pen?.color ?? '') ? overlay.pen!.color : '#e53935');
       path.setAttribute('stroke-width', String(overlay.pen && Number.isFinite(overlay.pen.width) ? Math.max(1, Math.min(20, overlay.pen.width)) : 4));
-      if (overlay.points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) {
-        path.setAttribute('d', overlay.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '));
-      }
-      if (overlay.laser && Number.isFinite(overlay.laser.x) && Number.isFinite(overlay.laser.y)) {
-        laser.style.left = `${rect.left - bounds.left + overlay.laser.x * rect.width / state.canvas.w}px`;
-        laser.style.top = `${rect.top - bounds.top + overlay.laser.y * rect.height / state.canvas.h}px`;
-        laser.hidden = false;
-      }
+      if (!remotePoints.length && !overlay.laser) {
+        if (frame !== null) cancelAnimationFrame(frame);
+        frame = null; laser.hidden = true; path.setAttribute('d', '');
+      } else schedule();
     },
     destroy() {
     blur();
@@ -321,6 +375,7 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
     window.removeEventListener('keydown', key, true);
     window.removeEventListener('keyup', keyup, true);
     window.removeEventListener('blur', blur);
+    window.removeEventListener('resize', blur);
     host.classList.remove('annotation-enabled');
     layer.remove(); toolbar.remove();
   } };

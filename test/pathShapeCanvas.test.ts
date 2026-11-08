@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyDeck, type ShapeEl, type SlideElement } from '../src/shared/deck.js';
 import { pathOnCanvas } from '../src/shared/pathNodes.js';
 import { editableRuns } from '../src/shared/lineFamily.js';
@@ -381,6 +381,24 @@ describe('editing a path\'s points', () => {
 
 describe('drawing with the pencil', () => {
   beforeEach(() => document.body.replaceChildren());
+
+  it('retains the same live overlay through rapid input and caches the stroke projection', () => {
+    const { store, canvas, host } = setup();
+    canvas.startPencil();
+    const stage = host.querySelector('.stage')!;
+    const reads = vi.spyOn(stage, 'getBoundingClientRect');
+    pointer(host, 'pointerdown', { x: 100, y: 100 });
+    const overlay = host.querySelector('.pencil-overlay');
+    for (let sample = 1; sample <= 200; sample++) pointer(host, 'pointermove', { x: 100 + sample, y: 100 + sample / 2 });
+    expect(host.querySelector('.pencil-overlay')).toBe(overlay);
+    expect(reads.mock.calls.length).toBeLessThanOrEqual(3);
+    pointer(host, 'pointerup', { x: 300, y: 200 });
+    expect(store.slide!.elements).toHaveLength(1);
+    expect(pathOnCanvas(store.slide!.elements[0] as ShapeEl)![0].nodes.at(-1)).toMatchObject({ x: 300, y: 200 });
+    expect(host.querySelector('.pencil-overlay')).toBeNull();
+    reads.mockRestore();
+  });
+
 
   it('discards cancelled strokes and rejects unrelated palm contacts', () => {
     const { store, canvas, host } = setup();

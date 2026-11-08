@@ -56,6 +56,42 @@ describe('speaker view', () => {
     commands = [];
   });
 
+  it('does not repaint clock text when its displayed value has not changed', () => {
+    const view = open({ now: () => 1000 });
+    const nodes = [...host.querySelectorAll('.speaker-presentation-timer, .speaker-slide-timer, .speaker-wall-clock')];
+    const textNodes = nodes.map((node) => node.firstChild);
+    view.tick(); view.tick();
+    expect(nodes.map((node) => node.firstChild)).toEqual(textNodes);
+    view.destroy();
+  });
+
+  it('keeps unchanged still previews alive when only presentation timing is published', () => {
+    const view = open();
+    const deck = deckOf(['Opening', 'Next']);
+    view.setDeck(deck);
+    const current = host.querySelector('.speaker-current .stage');
+    const next = host.querySelector('.speaker-next .stage');
+    view.setState(state({ startedAt: 1000, slideStartedAt: 1000 }));
+    view.setState(state({ startedAt: 1000, slideStartedAt: 2000 }));
+    expect(host.querySelector('.speaker-current .stage')).toBe(current);
+    expect(host.querySelector('.speaker-next .stage')).toBe(next);
+    const container = host.querySelector<HTMLElement>('.speaker-current')!;
+    let width = 800;
+    container.getBoundingClientRect = () => ({ width, height: 600 }) as DOMRect;
+    view.setState(state());
+    const transform = (current as HTMLElement).style.transform;
+    width = 400;
+    view.setState(state());
+    expect(host.querySelector('.speaker-current .stage')).toBe(current);
+    expect((current as HTMLElement).style.transform).not.toBe(transform);
+    const text = deck.slides[0].elements[0];
+    if (text.type === 'text') text.html = 'Changed content';
+    view.setDeck(deck);
+    expect(host.querySelector('.speaker-current')!.textContent).toContain('Changed content');
+    expect(host.querySelector('.speaker-current .stage')).not.toBe(current);
+    view.destroy();
+  });
+
   it('previews the current and the following slide', () => {
     const view = open();
     view.setDeck(deckOf(['Intro', 'Method', 'Results']));

@@ -1,5 +1,8 @@
 import type { XY } from '@shared/pathNodes.js';
 
+// Preview only: retain original samples for saved/exported vector geometry.
+const coord = (value: number): number => Math.round(value * 100) / 100;
+
 /** Incremental, bounded SVG paths: adding ink never reparses the whole stroke. */
 export class LiveInk {
   private current: SVGPathElement;
@@ -25,7 +28,7 @@ export class LiveInk {
       if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
       if (this.last?.x === point.x && this.last.y === point.y) continue;
       if (!this.last) {
-        this.data = `M ${point.x} ${point.y}`;
+        this.data = `M ${coord(point.x)} ${coord(point.y)}`;
         this.last = this.end = point;
         continue;
       }
@@ -33,14 +36,14 @@ export class LiveInk {
         this.current.setAttribute('d', this.data);
         this.current = this.first.cloneNode(false) as SVGPathElement;
         this.first.parentElement?.append(this.current);
-        this.data = `M ${this.end!.x} ${this.end!.y}`;
+        this.data = `M ${coord(this.end!.x)} ${coord(this.end!.y)}`;
         this.count = 0;
       }
       this.end = { x: (this.last.x + point.x) / 2, y: (this.last.y + point.y) / 2 };
-      this.data += ` Q ${this.last.x} ${this.last.y} ${this.end.x} ${this.end.y}`;
+      this.data += ` Q ${coord(this.last.x)} ${coord(this.last.y)} ${coord(this.end.x)} ${coord(this.end.y)}`;
       this.last = point;
       this.count++;
     }
-    if (this.last) this.current.setAttribute('d', `${this.data} L ${this.last.x} ${this.last.y}`);
+    if (this.last) this.current.setAttribute('d', `${this.data} L ${coord(this.last.x)} ${coord(this.last.y)}`);
   }
 }

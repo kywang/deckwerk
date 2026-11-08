@@ -86,3 +86,13 @@ You can also choose **Present → Present slides only** from the button's menu
 to suppress automatic Speaker View. Exit the running show first if changing
 presentation mode. Pen, color, width and laser controls remain on the slide
 window in this mode.
+
+### Low-power Linux tablets
+
+Live previews use short coordinate strings and audience ink is painted as soon
+as the presenter's frame-batched update arrives, avoiding an additional audience
+animation-frame wait. Saved strokes and PDF export retain the original samples.
+
+If a 4K monitor runs at 30 Hz, try 1920×1080 at 60 Hz in Ubuntu's display
+settings. The Surface Go has less display work to do and the monitor can refresh
+more often. Rerun your `xinput map-to-output` commands after changing the layout.

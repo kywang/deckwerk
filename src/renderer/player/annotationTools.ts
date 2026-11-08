@@ -182,37 +182,38 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   }
   function schedule(): void {
     if (frame !== null) return;
-    frame = requestAnimationFrame(() => {
-      frame = null;
-      const state = options.slide();
-      const p = measure();
-      if (!state || !p) return;
-      if (remote) {
-        if (remote.slideId !== state.slide.id) { ink.clear(); laser.hidden = true; return; }
-        ink.append(remotePoints.slice(remotePainted));
-        remotePainted = remotePoints.length;
-        laser.hidden = !remote.laser;
-        if (remote.laser) {
-          laser.style.left = `${p.left - p.hostLeft + remote.laser.x * p.width / p.w}px`;
-          laser.style.top = `${p.top - p.hostTop + remote.laser.y * p.height / p.h}px`;
-        }
-      } else if (active?.kind === 'ink') {
-        if (state.slide.id !== active.slideId) { cancel(); return; }
-        ink.append(active.points.slice(painted));
-        painted = active.points.length;
-        if (options.onOverlay && sent < painted) {
-          options.onOverlay({ slideId: active.slideId, points: active.points.slice(sent),
-            stroke: { id: active.stream, offset: sent }, laser: null, pen: active.pen });
-          sent = painted;
-        }
-      } else if (laserPoint) {
-        laser.style.left = `${laserPoint.x - p.hostLeft}px`;
-        laser.style.top = `${laserPoint.y - p.hostTop}px`;
-        laser.hidden = false;
-        options.onOverlay?.({ slideId: state.slide.id, points: [], pen,
-          laser: { x: (laserPoint.x - p.left) * p.w / p.width, y: (laserPoint.y - p.top) * p.h / p.height } });
+    frame = requestAnimationFrame(paint);
+  }
+  function paint(): void {
+    frame = null;
+    const state = options.slide();
+    const p = measure();
+    if (!state || !p) return;
+    if (remote) {
+      if (remote.slideId !== state.slide.id) { ink.clear(); laser.hidden = true; return; }
+      ink.append(remotePoints.slice(remotePainted));
+      remotePainted = remotePoints.length;
+      laser.hidden = !remote.laser;
+      if (remote.laser) {
+        laser.style.left = `${p.left - p.hostLeft + remote.laser.x * p.width / p.w}px`;
+        laser.style.top = `${p.top - p.hostTop + remote.laser.y * p.height / p.h}px`;
       }
-    });
+    } else if (active?.kind === 'ink') {
+      if (state.slide.id !== active.slideId) { cancel(); return; }
+      ink.append(active.points.slice(painted));
+      painted = active.points.length;
+      if (options.onOverlay && sent < painted) {
+        options.onOverlay({ slideId: active.slideId, points: active.points.slice(sent),
+          stroke: { id: active.stream, offset: sent }, laser: null, pen: active.pen });
+        sent = painted;
+      }
+    } else if (laserPoint) {
+      laser.style.left = `${laserPoint.x - p.hostLeft}px`;
+      laser.style.top = `${laserPoint.y - p.hostTop}px`;
+      laser.hidden = false;
+      options.onOverlay?.({ slideId: state.slide.id, points: [], pen,
+        laser: { x: (laserPoint.x - p.left) * p.w / p.width, y: (laserPoint.y - p.top) * p.h / p.height } });
+    }
   }
   const pointLaser = (point: XY): void => { laserPoint = point; schedule(); };
   const down = (event: PointerEvent): void => {
@@ -360,7 +361,12 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
       if (!remotePoints.length && !overlay.laser) {
         if (frame !== null) cancelAnimationFrame(frame);
         frame = null; laser.hidden = true; path.setAttribute('d', '');
-      } else schedule();
+      } else {
+        // The sender already batches ink once per animation frame. Waiting
+        // for another frame here adds a full refresh interval on the projector.
+        if (frame !== null) cancelAnimationFrame(frame);
+        paint();
+      }
     },
     destroy() {
     blur();

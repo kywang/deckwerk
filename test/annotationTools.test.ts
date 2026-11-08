@@ -50,6 +50,18 @@ function setup(onOverlay?: (overlay: AnnotationOverlay) => void) {
 }
 
 describe('presentation annotation tools', () => {
+  it('paints frame-batched presenter ink immediately without adding an audience frame of latency', () => {
+    const { host, tools, deck } = setup();
+    tools.showOverlay({ slideId: deck.slides[0].id, points: [{ x: 100, y: 100 }, { x: 200, y: 150 }], laser: null,
+      stroke: { id: 'latency', offset: 0 } });
+    expect(host.querySelector('.annotation-preview path')?.getAttribute('d')).toContain('L 200 150');
+    expect(frames.size).toBe(0);
+    tools.showOverlay({ slideId: deck.slides[0].id, points: [{ x: 300, y: 200 }], laser: null,
+      stroke: { id: 'latency', offset: 2 } });
+    expect(host.querySelector('.annotation-preview path')?.getAttribute('d')).toContain('L 300 200');
+    expect(frames.size).toBe(0);
+  });
+
   it('batches a coalesced burst without repeating layout reads or retransmitting old points', () => {
     const updates: AnnotationOverlay[] = [];
     const { host, pointer, save } = setup((overlay) => updates.push(overlay));

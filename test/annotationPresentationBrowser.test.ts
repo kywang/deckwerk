@@ -62,6 +62,28 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
       return { x: r.left, y: r.top, width: r.width, height: r.height };
     })()`);
     const points = [0.2, 0.35, 0.5, 0.65].map((t) => ({ x: rect.x + rect.width * t, y: rect.y + rect.height * (t < 0.4 ? 0.3 : 0.5) }));
+    await audience.click('[data-annotation-mode="pen"]');
+    // A real held stylus, followed by a held finger: neither may save ink or
+    // advance the slide, and releasing each restores the selected Pen tool.
+    for (const input of ['pen', 'touch']) {
+      if (input === 'pen') await audience.call('Input.dispatchMouseEvent', {
+        type: 'mousePressed', ...points[0], button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1,
+      });
+      else await audience.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [points[0]] });
+      await eventually(() => audience.evaluate<boolean>(`!document.querySelector('.presentation-laser').hidden`), 'long press did not activate the laser');
+      if (input === 'pen') {
+        await audience.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...points[2], button: 'left', buttons: 1, pointerType: 'pen' });
+        await audience.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...points[2], button: 'left', buttons: 0, pointerType: 'pen', clickCount: 1 });
+      } else {
+        await audience.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [points[2]] });
+        await audience.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      }
+      expect(await audience.evaluate<boolean>(`document.querySelector('.presentation-laser').hidden`)).toBe(true);
+      expect(await audience.evaluate<string>(`document.querySelector('.stage .slide').dataset.slideId`)).toBe(deck.slides[0].id);
+      expect(await audience.evaluate<string>(`document.querySelector('[data-annotation-mode="pen"]').getAttribute('aria-pressed')`)).toBe('true');
+      expect((await loadDeck(deckDir)).slides[0].elements).toHaveLength(0);
+    }
+    // Drawing resumes immediately after lifting, without choosing a tool.
     for (let i = 0; i < points.length; i++) await audience.call('Input.dispatchMouseEvent', {
       type: i ? 'mouseMoved' : 'mousePressed', ...points[i], button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1,
     });

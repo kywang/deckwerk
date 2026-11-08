@@ -8,7 +8,7 @@ import { buildPrintPages } from '../src/renderer/print/pages.js';
 import { installCanvasDomShims } from './support/canvasHarness.js';
 
 let destroy: (() => void) | undefined;
-afterEach(() => { destroy?.(); destroy = undefined; document.body.replaceChildren(); });
+afterEach(() => { destroy?.(); destroy = undefined; vi.useRealTimers(); document.body.replaceChildren(); });
 
 function setup() {
   installCanvasDomShims();
@@ -33,6 +33,122 @@ function setup() {
 }
 
 describe('presentation annotation tools', () => {
+  it.each(['pen', 'mouse', 'touch'])('holds %s for a temporary laser and restores Pen on release', (pointerType) => {
+    vi.useFakeTimers();
+    const { host, save, pointer, choose } = setup();
+    choose('pen');
+    const laser = host.querySelector<HTMLElement>('.presentation-laser')!;
+    pointer('pointerdown', 150, 200, 1, pointerType);
+    vi.advanceTimersByTime(499);
+    expect(laser.hidden).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(laser.hidden).toBe(false);
+    pointer('pointermove', 400, 300, 1, pointerType);
+    expect(laser.style.left).toBe('400px');
+    pointer('pointerup', 400, 300, 1, pointerType);
+    pointer('click', 400, 300, 1, pointerType);
+    expect(laser.hidden).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-annotation-mode="pen"]')?.getAttribute('aria-pressed')).toBe('true');
+    if (pointerType !== 'touch') {
+      pointer('pointerdown', 100, 100, 1, pointerType);
+      pointer('pointermove', 300, 200, 1, pointerType);
+      pointer('pointerup', 400, 200, 1, pointerType);
+      expect(save).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('preserves short Navigate taps and suppresses navigation after a long touch', () => {
+    vi.useFakeTimers();
+    const { host, pointer, save } = setup();
+    const navigate = vi.fn();
+    host.addEventListener('click', navigate);
+    const fullscreen = vi.fn();
+    host.addEventListener('dblclick', fullscreen);
+    pointer('pointerdown', 100, 100, 1, 'touch');
+    vi.advanceTimersByTime(200);
+    pointer('pointerup', 100, 100, 1, 'touch');
+    pointer('click', 100, 100, 1, 'touch');
+    expect(navigate).toHaveBeenCalledTimes(1);
+    pointer('pointerdown', 100, 100, 1, 'touch');
+    vi.advanceTimersByTime(500);
+    expect(host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(false);
+    pointer('pointerup', 300, 200, 1, 'touch');
+    pointer('click', 300, 200, 1, 'touch');
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
+    pointer('dblclick', 300, 200, 1, 'touch');
+    expect(fullscreen).not.toHaveBeenCalled();
+    // The next independent tap still navigates.
+    pointer('pointerdown', 100, 100);
+    pointer('pointerup', 100, 100);
+    pointer('click', 100, 100);
+    expect(navigate).toHaveBeenCalledTimes(2);
+  });
+
+  it('tolerates hand jitter but never turns a paused drawing into a laser', () => {
+    vi.useFakeTimers();
+    const { host, pointer, save } = setup();
+    const laser = host.querySelector<HTMLElement>('.presentation-laser')!;
+    pointer('pointerdown', 100, 100, 1, 'pen');
+    pointer('pointermove', 103, 104, 1, 'pen');
+    vi.advanceTimersByTime(500);
+    expect(laser.hidden).toBe(false);
+    pointer('pointerup', 103, 104, 1, 'pen');
+    pointer('pointerdown', 100, 100, 1, 'pen');
+    pointer('pointermove', 130, 120, 1, 'pen');
+    vi.advanceTimersByTime(1000);
+    expect(laser.hidden).toBe(true);
+    pointer('pointerup', 200, 150, 1, 'pen');
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending hold on release, capture loss, blur, tool change or slide change', () => {
+    vi.useFakeTimers();
+    for (const reason of ['pointerup', 'pointercancel', 'lostpointercapture', 'blur', 'tool', 'slide', 'destroy']) {
+      const { host, pointer, choose, deck, next, save } = setup();
+      pointer('pointerdown', 100, 100, 1, 'pen');
+      vi.advanceTimersByTime(200);
+      if (reason === 'blur') window.dispatchEvent(new Event('blur'));
+      else if (reason === 'tool') choose('navigate');
+      else if (reason === 'slide') { deck.slides.push({ ...structuredClone(deck.slides[0]), id: 'other' }); next(); }
+      else if (reason === 'destroy') destroy!();
+      else pointer(reason, 100, 100, 1, 'pen');
+      vi.advanceTimersByTime(1000);
+      expect(host.querySelector<HTMLElement>('.presentation-laser')?.hidden ?? true).toBe(true);
+      expect(save).not.toHaveBeenCalled();
+      destroy!(); destroy = undefined;
+      host.remove();
+    }
+  });
+
+  it('fuzzes hold, draw and cancel gestures without saving laser movements', () => {
+    vi.useFakeTimers();
+    const { host, pointer, save, choose } = setup();
+    let seed = 8317;
+    let expectedInk = 0;
+    for (let step = 0; step < 60; step++) {
+      seed = (seed * 16807) % 2147483647;
+      const action = seed % 4;
+      choose('pen');
+      pointer('pointerdown', 100, 100, 1, 'pen');
+      if (action === 0) {
+        vi.advanceTimersByTime(500);
+        pointer('pointermove', 500, 300, 1, 'pen');
+      } else if (action === 1) {
+        pointer('pointermove', 200, 150, 1, 'pen');
+        vi.advanceTimersByTime(800);
+        expectedInk++;
+      } else if (action === 2) pointer('pointercancel', 100, 100, 1, 'pen');
+      else window.dispatchEvent(new Event('blur'));
+      pointer('pointerup', 500, 300, 1, 'pen');
+      pointer('click', 500, 300, 1, 'pen');
+      vi.advanceTimersByTime(600);
+      expect(save).toHaveBeenCalledTimes(expectedInk);
+      expect(host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(true);
+    }
+  });
+
   it('draws a stylus stroke without advancing, in slide coordinates, then persists and prints it', () => {
     const { deck, host, save, pointer } = setup();
     const navigate = vi.fn();

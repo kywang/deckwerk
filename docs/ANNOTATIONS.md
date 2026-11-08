@@ -16,6 +16,12 @@ the bottom of the audience view:
 - **Laser** (**L**) displays a red pointer. Moving or clicking with it does not
   advance the slide. Holding **Ctrl** while pointing also activates a temporary
   laser; releasing Ctrl hides it.
+- **Press and hold** for half a second to use the laser temporarily with a
+  stylus, mouse, or finger, including while Pen is selected. Keep holding to
+  move the pointer; lift to hide it and return to the previous tool. Move to
+  start drawing before the half-second elapses to keep a normal pen stroke.
+  Pausing after drawing has started never activates the laser. Short taps in
+  Navigate continue to advance slides.
 - **Navigate** (**V**) returns to normal slide navigation. Escape puts an active
   tool down; in browser fullscreen, the browser may handle Escape first. Arrow
   keys continue to navigate while a tool is selected.

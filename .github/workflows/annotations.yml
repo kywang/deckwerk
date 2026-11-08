@@ -10,6 +10,8 @@ on:
       - 'test/liveInk.test.ts'
       - 'test/pathShapeCanvas.test.ts'
       - 'src/renderer/presenter/**'
+      - 'src/renderer/present/**'
+      - 'src/renderer/collab/present.ts'
       - 'src/shared/annotations.ts'
       - 'src/shared/ipc.ts'
       - 'test/annotation*'

@@ -394,6 +394,7 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
 
   return {
     setDeck(next) {
+      if (deck && next && (deck.canvas.w !== next.canvas.w || deck.canvas.h !== next.canvas.h)) annotationTools?.reset();
       previewStates.delete(currentHost); previewStates.delete(nextHost);
       commitNotes();
       deck = next;

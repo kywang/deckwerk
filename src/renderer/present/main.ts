@@ -27,6 +27,7 @@ hideCursorWhenIdle(document.body);
 let player: Player | null = null;
 let annotationTools: ReturnType<typeof createAnnotationTools> | null = null;
 let speakerControls = false;
+let annotationPosition = '';
 let session: DeckSession | null = null;
 let range: PresentationRange | null = null;
 let themeLink: HTMLStyleElement | null = null;
@@ -115,7 +116,9 @@ function start(nextSession: DeckSession): void {
     container: root!,
     resolveSrc: (src) => window.api.assetUrl(src),
     onCursor: (cursor, steps) => {
-      annotationTools?.reset();
+      const key = `${session?.deck.slides[cursor.slide]?.id}:${cursor.step}:${session?.deck.canvas.w}:${session?.deck.canvas.h}`;
+      if (key !== annotationPosition) annotationTools?.reset();
+      annotationPosition = key;
       stepsOnSlide = steps;
       if (settlingBeforeResume) return;
       if (cursor.slide !== timedSlide) {

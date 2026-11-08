@@ -180,6 +180,7 @@ const speakerHost = document.getElementById('speaker')!;
 
 let annotationTools: ReturnType<typeof createAnnotationTools> | null = null;
 let speakerControls = false;
+let annotationPosition = '';
 let deck: Deck | null = null;
 let themeCss = '';
 let player: Player | null = null;
@@ -259,7 +260,9 @@ function resolveSrc(src: string): string {
 /* --- audience -------------------------------------------------------------- */
 
 function publishState(cursor: Cursor, steps: number): void {
-  annotationTools?.reset();
+  const key = `${deck?.slides[cursor.slide]?.id}:${cursor.step}:${deck?.canvas.w}:${deck?.canvas.h}`;
+  if (key !== annotationPosition) annotationTools?.reset();
+  annotationPosition = key;
   if (cursor.slide !== timedSlide) {
     timedSlide = cursor.slide;
     slideStartedAt = Date.now();

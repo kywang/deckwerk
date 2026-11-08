@@ -115,6 +115,7 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
       })`), 'presentation controls were clipped at a smaller screen size');
     }
     await driver.call('Emulation.clearDeviceMetricsOverride');
+    await driver.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     const rect = await driver.evaluate<{ x: number; y: number; width: number; height: number }>(`(() => {
       const r = document.querySelector('.speaker-current .stage, .player-root > .stage').getBoundingClientRect();
       return { x: r.left, y: r.top, width: r.width, height: r.height };
@@ -180,9 +181,30 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
       expect((await loadDeck(deckDir)).slides[0].elements).toHaveLength(0);
     }
     // Drawing resumes immediately after lifting, without choosing a tool.
-    for (let i = 0; i < points.length; i++) await driver.call('Input.dispatchMouseEvent', {
-      type: i ? 'mouseMoved' : 'mousePressed', ...points[i], button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1,
-    });
+    const expectedTail = await driver.evaluate<number[]>(`(() => {
+      const r = document.querySelector('.speaker-current .stage, .player-root > .stage').getBoundingClientRect();
+      return [Math.max(0, Math.min(${deck.canvas.w}, (${points.at(-1)!.x} - r.left) * ${deck.canvas.w} / r.width)),
+        Math.max(0, Math.min(${deck.canvas.h}, (${points.at(-1)!.y} - r.top) * ${deck.canvas.h} / r.height))];
+    })()`);
+    if (backend === 'desktop-speaker') await audience.evaluate('window.inkDeckRefreshes = 0; window.api.onDeckState(() => window.inkDeckRefreshes++);');
+    for (let i = 0; i < points.length; i++) {
+      await driver.call('Input.dispatchMouseEvent', {
+        type: i ? 'mouseMoved' : 'mousePressed', ...points[i], button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1,
+      });
+      if (i === 1 && backend === 'desktop-speaker') {
+        await eventually(() => audience.evaluate<string>(`document.querySelector('.annotation-preview path')?.getAttribute('d') ?? ''`), 'live stroke did not begin before snapshot test', Boolean);
+        // A previous save can arrive while the next stroke is still down.
+        await editor!.evaluate(`(async () => {
+          const session = await window.api.getDeck();
+          await window.api.syncDeckSnapshot({ ...session, themeCss: await window.api.loadTheme() });
+        })()`);
+        await eventually(() => audience.evaluate<number>('window.inkDeckRefreshes'), 'test snapshot did not reach the audience', (count) => count > 0);
+      }
+    }
+    await eventually(() => audience.evaluate<number[]>(`(() => {
+      const path = document.querySelector('.annotation-preview path:last-child');
+      return (path?.getAttribute('d') ?? '').trim().split(/\\s+/).slice(-2).map(Number);
+    })()`), 'live ink lost its tail during a deck refresh', (point) => Math.abs(point[0] - expectedTail[0]) < 1 && Math.abs(point[1] - expectedTail[1]) < 1);
     await eventually(() => audience.evaluate<string>(`document.querySelector('.annotation-preview path')?.getAttribute('stroke')`), 'pen color did not reach the audience preview', (color) => color === '#1976d2');
     expect(await audience.evaluate<string>(`document.querySelector('.annotation-preview path')?.getAttribute('stroke-width')`)).toBe('12');
     await driver.call('Input.dispatchMouseEvent', {

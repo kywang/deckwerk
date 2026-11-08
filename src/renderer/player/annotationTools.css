@@ -1,0 +1,11 @@
+@import '../appChrome.css';
+
+.annotation-enabled > .stage { touch-action: none; }
+.annotation-layer { position: absolute; inset: 0; z-index: 80; pointer-events: none; }
+.annotation-layer.annotation-active { pointer-events: auto; touch-action: none; cursor: crosshair; }
+.annotation-layer.laser-active { cursor: none; }
+.annotation-preview { position: absolute; overflow: hidden; pointer-events: none; }
+.annotation-toolbar { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 81; display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 2px 12px #0004; }
+.annotation-toolbar .ui-button[aria-pressed="true"] { background: var(--accent); color: white; }
+.presentation-laser { position: absolute; width: 14px; height: 14px; transform: translate(-50%, -50%); border-radius: 50%; background: #ff3030; border: 2px solid #fff9; box-shadow: 0 0 6px 3px #ff2020, 0 0 18px 6px #ff202080; pointer-events: none; }
+@media print { .annotation-layer, .annotation-toolbar { display: none !important; } }

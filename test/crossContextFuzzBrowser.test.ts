@@ -158,7 +158,7 @@ type OpName =
   | 'rail hop' | 'undo' | 'redo' | 'undo round-trip' | 'delete selection'
   | 'cmd+a' | 'click with stray hover' | 'rail multi-delete' | 'stack key' | 'spelling fix'
   | 'size from sidebar' | 'flip from sidebar' | 'viewport gesture' | 'pen abandoned' | 'pen line undone'
-  | 'pencil stroke undone' | 'line bent and undone';
+  | 'pencil stroke undone' | 'stylus stroke undone' | 'line bent and undone';
 
 interface Violation { seed: number; step: number; op: OpName; oracle: string; detail: string }
 
@@ -447,6 +447,7 @@ function chooseOp(next: () => number, pre: CrossState): OpName {
     add('pen abandoned', 1);
     add('pen line undone', 1);
     add('pencil stroke undone', 1);
+    add('stylus stroke undone', 1);
     add('line bent and undone', 1);
   }
   return pick(next, ops);
@@ -714,20 +715,32 @@ async function performOp(
       if (await session.deckSnapshot() !== before) flag('undoRoundTrip', 'undo did not take back the drawn line');
       return 'same';
     }
+    case 'stylus stroke undone':
     case 'pencil stroke undone': {
       // Shift+P, one freehand stroke: one smooth path, the pencil still out
       // for the next; Escape puts it down, and one undo takes the stroke back.
       const before = await session.deckSnapshot();
       const idsBefore = await session.allElementIds();
-      await session.chord('P', 'KeyP', 80, SHIFT);
+      if (op !== 'stylus stroke undone') await session.chord('P', 'KeyP', 80, SHIFT);
       await wait(60);
-      if (!await pencilIsOut()) {
+      if (op !== 'stylus stroke undone' && !await pencilIsOut()) {
         flag('routing', 'Shift+P did not take up the pencil');
         return 'same';
       }
       const layer = await session.boxOf('.slide-layer');
       const at = (fx: number, fy: number) => ({ x: layer.left + layer.width * fx, y: layer.top + layer.height * fy });
-      await session.dragPath([at(0.3, 0.9), at(0.38, 0.84), at(0.46, 0.93), at(0.54, 0.85), at(0.62, 0.92)]);
+      const points = [at(0.3, 0.9), at(0.38, 0.84), at(0.46, 0.93), at(0.54, 0.85), at(0.62, 0.92)];
+      if (op === 'stylus stroke undone') {
+        for (let i = 0; i < points.length; i++) {
+          await session.cdp.call('Input.dispatchMouseEvent', {
+            type: i === 0 ? 'mousePressed' : 'mouseMoved', ...points[i],
+            button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1,
+          });
+        }
+        await session.cdp.call('Input.dispatchMouseEvent', {
+          type: 'mouseReleased', ...points.at(-1)!, button: 'left', buttons: 0, pointerType: 'pen', clickCount: 1,
+        });
+      } else await session.dragPath(points);
       await wait(120);
       const drawn = await session.allElementIds();
       if (drawn.length !== idsBefore.length + 1) {

@@ -5,7 +5,7 @@ import { userInfo } from 'node:os';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { BrowserWindow, app, clipboard, ipcMain, screen, shell } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
-import { parseDeck, type Deck } from '@shared/deck.js';
+import { ElementSchema, parseDeck, type Deck } from '@shared/deck.js';
 import type { DeckHistoryDocument } from '@shared/deckHistory.js';
 import {
   CLIPBOARD_FORMAT,
@@ -1339,6 +1339,14 @@ function registerHandlers(): void {
     if (!state) return;
     state.presentationState = presentation;
     state.presenter?.webContents.send(IPC.presentState, presentation);
+  });
+  ipcMain.on(IPC.presentAnnotation, (event, edit) => {
+    const state = ownerOf(event.sender);
+    if (!state || event.sender !== state.present?.webContents) return;
+    if (typeof edit?.slideId !== 'string') return;
+    const stroke = ElementSchema.safeParse(edit.stroke);
+    if (!stroke.success || stroke.data.type !== 'shape' || stroke.data.shape !== 'path') return;
+    if (!state.editor.isDestroyed()) state.editor.webContents.send(IPC.presentAnnotation, { slideId: edit.slideId, stroke: stroke.data });
   });
   ipcMain.on(IPC.presentNotesEdit, (event, edit: { slideId: string; notes: string }) => {
     const state = ownerOf(event.sender);

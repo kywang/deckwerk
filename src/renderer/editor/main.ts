@@ -1746,6 +1746,15 @@ canvas.contextActions = makeContextActions(shellDeps, clipboard);
 // Watch mode: the main process reloads the deck when deck.json changes on
 // disk (an agent, a git checkout, hand editing) and broadcasts it here. Our
 // own saves echo back identical content and are ignored by comparison.
+window.api.onPresentAnnotation(({ slideId, stroke }) => {
+  const slide = store.get().deck.slides.find((item) => item.id === slideId);
+  if (!slide || slide.elements.some((item) => item.id === stroke.id)) return;
+  store.commit((deck) => {
+    const target = deck.slides.find((item) => item.id === slideId);
+    if (target) target.elements.push({ ...stroke, z: Math.max(0, ...target.elements.map((item) => item.z)) + 1 });
+  }, { label: 'Annotate slide' });
+  void save().catch((error) => setStatusMessage(`Could not save annotation: ${String(error)}`));
+});
 window.api.onPresentNotesEdit(({ slideId, notes }) => {
   const slide = store.get().deck.slides.find((item) => item.id === slideId);
   if (!slide || slide.notes === notes) return;

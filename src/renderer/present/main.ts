@@ -1,4 +1,5 @@
 import '../player/player.css';
+import { createAnnotationTools } from '../player/annotationTools.js';
 import type { DeckSession } from '@shared/ipc.js';
 import type { PresentationCommand } from '@shared/ipc.js';
 import {
@@ -118,6 +119,20 @@ function start(nextSession: DeckSession): void {
         slideStartedAt = Date.now();
       }
       publish();
+    },
+  });
+  createAnnotationTools({
+    host: root!,
+    slide: () => {
+      const slide = session?.deck.slides[player!.getCursor().slide];
+      return slide && session ? { slide, canvas: session.deck.canvas } : null;
+    },
+    save: (slideId, stroke) => {
+      if (!session || !player) return;
+      window.api.editPresentAnnotation(slideId, stroke);
+      session = { ...session, deck: { ...session.deck, slides: session.deck.slides.map((slide) =>
+        slide.id === slideId ? { ...slide, elements: [...slide.elements, stroke] } : slide) } };
+      player.setDeck(session.deck);
     },
   });
   // Presenting from a skipped slide would put it on the projector anyway;

@@ -1181,6 +1181,7 @@ export class EditorCanvas {
    * stroke becomes its own path when the pointer lifts, and the pencil stays
    * out for the next one until Escape, Return or the button puts it down.
    */
+  private pencilPointerId: number | null = null;
   private pencil: { slideId: string; stroke: XY[] | null } | null = null;
   /** Notified when the pen or the pencil is taken up or put down, so the toolbar can show it. */
   onPenToolChange?: (tool: DrawingTool | null) => void;
@@ -2893,10 +2894,15 @@ export class EditorCanvas {
 
   private bindPointer(): void {
     this.host.addEventListener('pointerdown', (ev) => {
+      // A stylus is a freehand pen; ignore palm contacts during its stroke.
+      if (this.pencilPointerId !== null && ev.pointerId !== this.pencilPointerId) return;
+      if (ev.pointerType === 'pen' && ev.button === 0 && !this.pen && !this.pencil
+          && (ev.target as Element).closest('.stage')) this.startPencil();
       if (this.beginViewportPan(ev)) return;
       this.onPointerDown(ev);
     });
     this.host.addEventListener('pointermove', (ev) => {
+      if (this.pencilPointerId !== null && ev.pointerId !== this.pencilPointerId) return;
       if (this.moveViewportPan(ev)) return;
       // Covers entering the canvas with Command already held, when this window
       // did not receive the original keydown.
@@ -2912,12 +2918,24 @@ export class EditorCanvas {
       this.onPointerSample?.(this.toCanvas(ev));
     });
     this.host.addEventListener('pointerup', (ev) => {
+      if (this.pencilPointerId !== null && ev.pointerId !== this.pencilPointerId) return;
       if (this.endViewportPan(ev)) return;
       this.onPointerUp(ev);
     });
     this.host.addEventListener('pointercancel', (ev) => {
       if (this.endViewportPan(ev)) return;
+      if (this.pencilPointerId === ev.pointerId) {
+        this.pencilPointerId = null;
+        if (this.pencil) this.pencil.stroke = null;
+        this.redrawOverlay();
+      }
       this.endDrag();
+    });
+    this.host.addEventListener('lostpointercapture', (ev) => {
+      if (this.pencilPointerId !== ev.pointerId) return;
+      this.pencilPointerId = null;
+      if (this.pencil) this.pencil.stroke = null;
+      this.redrawOverlay();
     });
     this.host.addEventListener('dblclick', (ev) => this.onDoubleClick(ev));
     // A web font that finishes loading after the slide was measured changes
@@ -3024,6 +3042,7 @@ export class EditorCanvas {
       return;
     }
     if (this.pencil) {
+      this.pencilPointerId = ev.pointerId;
       this.pencil.stroke = [point];
       this.redrawOverlay();
       return;
@@ -3795,9 +3814,11 @@ export class EditorCanvas {
       return;
     }
     if (this.pencil) {
-      this.host.releasePointerCapture?.(ev.pointerId);
       const stroke = this.pencil.stroke;
       this.pencil.stroke = null;
+      this.pencilPointerId = null;
+      this.host.releasePointerCapture?.(ev.pointerId);
+      if (stroke) stroke.push(this.toCanvas(ev));
       if (stroke) this.finishPencilStroke(stroke);
       this.redrawOverlay();
       return;
@@ -4147,6 +4168,9 @@ export class EditorCanvas {
   private endPencil(): void {
     if (!this.pencil) return;
     this.pencil = null;
+    const pointerId = this.pencilPointerId;
+    this.pencilPointerId = null;
+    if (pointerId !== null && this.host.hasPointerCapture?.(pointerId)) this.host.releasePointerCapture(pointerId);
     this.host.classList.remove('pencil-tool');
     this.onPenToolChange?.(null);
     this.redrawOverlay();

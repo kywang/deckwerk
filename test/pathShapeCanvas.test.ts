@@ -382,6 +382,41 @@ describe('editing a path\'s points', () => {
 describe('drawing with the pencil', () => {
   beforeEach(() => document.body.replaceChildren());
 
+  it('discards cancelled strokes and rejects unrelated palm contacts', () => {
+    const { store, canvas, host } = setup();
+    canvas.startPencil();
+    pointer(host, 'pointerdown', { x: 100, y: 100 });
+    pointer(host, 'pointermove', { x: 300, y: 200 });
+    host.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true }));
+    expect(host.querySelector('.pencil-overlay-stroke')).toBeNull();
+    pointer(host, 'pointerup', { x: 400, y: 200 });
+    expect(store.slide!.elements).toHaveLength(0);
+    pointer(host, 'pointerdown', { x: 100, y: 100 });
+    host.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 2, clientX: 900, clientY: 900, bubbles: true }));
+    host.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2, clientX: 900, clientY: 900, bubbles: true }));
+    expect(store.slide!.elements).toHaveLength(0);
+    pointer(host, 'pointermove', { x: 200, y: 100 });
+    pointer(host, 'pointerup', { x: 300, y: 100 });
+    expect(store.slide!.elements).toHaveLength(1);
+    expect((store.slide!.elements[0] as ShapeEl).x).toBe(100);
+  });
+
+  it('automatically draws with a stylus and includes its release position', () => {
+    const { store, canvas, host } = setup();
+    const target = host.querySelector('.stage')!;
+    const event = new PointerEvent('pointerdown', { pointerId: 1, clientX: 100, clientY: 100, button: 0, bubbles: true });
+    Object.defineProperty(event, 'pointerType', { value: 'pen' });
+    target.dispatchEvent(event);
+    expect(canvas.drawingTool()).toBe('pencil');
+    pointer(host, 'pointermove', { x: 200, y: 100 });
+    pointer(host, 'pointerup', { x: 400, y: 100 });
+    expect(store.slide!.elements).toHaveLength(1);
+    const run = pathOnCanvas(store.slide!.elements[0] as ShapeEl)![0];
+    expect(run.nodes.at(-1)?.x).toBeCloseTo(400);
+    store.undo();
+    expect(store.slide!.elements).toHaveLength(0);
+  });
+
   it('turns each freehand stroke into a smooth line, and stays out for the next', () => {
     const { store, canvas, host } = setup();
     canvas.startPencil();

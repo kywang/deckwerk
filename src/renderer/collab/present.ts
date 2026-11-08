@@ -12,6 +12,7 @@ import {
 } from '@shared/presentationRange.js';
 import type { Cursor } from '@shared/timeline.js';
 import { Player } from '../player/player.js';
+import { createAnnotationTools } from '../player/annotationTools.js';
 import { bindPresentKeys } from '../player/keys.js';
 import { bindSpeakerKeys, createSpeakerView, type SpeakerView } from '../presenter/speakerView.js';
 import { CollabBridge } from './collabBridge.js';
@@ -177,6 +178,7 @@ function borrowFromEditor(): ((url: string) => string | undefined) | undefined {
 const stageHost = document.getElementById('stage')!;
 const speakerHost = document.getElementById('speaker')!;
 
+let annotationTools: ReturnType<typeof createAnnotationTools> | null = null;
 let deck: Deck | null = null;
 let themeCss = '';
 let player: Player | null = null;
@@ -336,6 +338,20 @@ function mountAudience(): void {
   // the notice so it shrinks to a pill instead of covering the presentation.
   if (connectionNotice.state() === 'disconnected') connectionNotice.showDisconnected();
   if (agentViewer) return;
+  if (!tutorialViewer) annotationTools = createAnnotationTools({
+    host: stageHost,
+    slide: () => {
+      const slide = deck?.slides[player!.getCursor().slide];
+      return slide && deck ? { slide, canvas: deck.canvas } : null;
+    },
+    save: (slideId, stroke) => {
+      if (!deck) return;
+      const nextDeck = { ...deck, slides: deck.slides.map((slide) =>
+        slide.id === slideId ? { ...slide, elements: [...slide.elements, stroke] } : slide) };
+      bridge.localEdit(deck, nextDeck, 'Annotate slide');
+      applyDeck(nextDeck, null, 'session');
+    },
+  });
   unbindAudienceKeys = bindPresentKeys(window, player, {
     onExit: exitPresentation,
     onNext: advance,
@@ -347,6 +363,8 @@ function mountAudience(): void {
 }
 
 function unmountAudience(): void {
+  annotationTools?.destroy();
+  annotationTools = null;
   unbindAudienceKeys?.();
   unbindAudienceKeys = null;
   player?.destroy();

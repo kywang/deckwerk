@@ -51,6 +51,7 @@ export const IPC = {
   presentCommand: 'present:command',
   presentState: 'present:state',
   presentNotesEdit: 'present:notesEdit',
+  presentAnnotation: 'present:annotation',
   /** The show ended; carries the slide index it was on, for the editor to land on. */
   presentEnded: 'present:ended',
   trimOpen: 'trim:open',

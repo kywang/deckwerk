@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
-import type { Deck } from '@shared/deck.js';
+import type { Deck, ShapeEl } from '@shared/deck.js';
 import type { DeckHistoryDocument } from '@shared/deckHistory.js';
 import type { ClipboardReadResult, ClipboardWriteRequest } from '@shared/clipboard.js';
 import type { ClipboardImageSource } from '@shared/clipboardImages.js';
@@ -239,6 +239,10 @@ const api = {
     on(IPC.presentCommand, fn),
   onPresentState: (fn: (state: PresentationState) => void): (() => void) =>
     on(IPC.presentState, fn),
+  editPresentAnnotation: (slideId: string, stroke: ShapeEl): void =>
+    ipcRenderer.send(IPC.presentAnnotation, { slideId, stroke }),
+  onPresentAnnotation: (fn: (edit: { slideId: string; stroke: ShapeEl }) => void): (() => void) =>
+    on(IPC.presentAnnotation, fn),
   editPresentNotes: (slideId: string, notes: string): void =>
     ipcRenderer.send(IPC.presentNotesEdit, { slideId, notes }),
   onPresentNotesEdit: (fn: (edit: { slideId: string; notes: string }) => void): (() => void) =>

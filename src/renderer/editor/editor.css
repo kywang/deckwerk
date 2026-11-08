@@ -351,6 +351,7 @@ body.panel-resizing iframe { pointer-events: none; }
 .canvas-host.is-panning * { cursor: grabbing !important; }
 
 .canvas-host .stage {
+  touch-action: none;
   position: absolute;
   box-shadow: 0 8px 40px rgb(0 0 0 / 50%);
 }

@@ -6,6 +6,11 @@
 
 Website: **[deckwerk.org](https://deckwerk.org)**
 
+This fork adds saved stylus annotations, a long-press laser pointer, Presenter
+View annotation controls, and selectable pen colours and widths. These changes
+are on `main` of [kywang/deckwerk](https://github.com/kywang/deckwerk). For Linux
+build instructions for this version, see [Annotations](docs/ANNOTATIONS.md).
+
 I designed DeckWerk to bring the ability to create and present polished talks to Linux. It is optimized for presentations centered on video and image content, with animation, tables, plotting, templating, and similar features reduced to the minimum.
 
 DeckWerk is intended for research talks, lectures, demos, and other presentations in which the visual material is the substance.
@@ -37,7 +42,7 @@ does a Flatpak: for those the menu item opens the release page.
 Python 3.10 or newer, and Git:
 
 ```bash
-git clone https://github.com/vsitzmann/deckwerk.git
+git clone https://github.com/kywang/deckwerk.git
 cd deckwerk
 npm ci
 npm run dist

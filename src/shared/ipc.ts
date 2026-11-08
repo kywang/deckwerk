@@ -213,6 +213,7 @@ export type AgentSessionState = AgentSessionConnection | { active: false };
 export type { AgentContextDraft, AgentRequest, AgentResponse };
 
 export interface AnnotationOverlay {
+  pen?: { color: string; width: number };
   slideId: string;
   laser: { x: number; y: number } | null;
   points: { x: number; y: number }[];

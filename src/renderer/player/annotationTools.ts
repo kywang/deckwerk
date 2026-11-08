@@ -9,9 +9,27 @@ import './annotationTools.css';
 type Mode = 'navigate' | 'pen' | 'laser';
 export const LASER_HOLD_MS = 500;
 const HOLD_SLOP_PX = 8;
+export const PEN_COLORS = [
+  ['Red', '#e53935'], ['Blue', '#1976d2'], ['Green', '#2e7d32'], ['Yellow', '#fdd835'],
+  ['Orange', '#f57c00'], ['Purple', '#8e24aa'], ['Black', '#111111'], ['White', '#ffffff'],
+] as const;
+export const PEN_WIDTHS = [1, 2, 4, 6, 8, 12, 20] as const;
+const PEN_PREFERENCE = 'deckwerk.annotation.pen';
+type PenStyle = { color: string; width: number };
+
+function storedPenStyle(): PenStyle {
+  try {
+    const value = JSON.parse(localStorage.getItem(PEN_PREFERENCE) ?? '{}');
+    return {
+      color: PEN_COLORS.some(([, color]) => color === value?.color) ? value.color : '#e53935',
+      width: PEN_WIDTHS.some((width) => width === value?.width) ? value.width : 4,
+    };
+  } catch { return { color: '#e53935', width: 4 }; }
+}
 interface PointerGesture {
   id: number; slideId: string; points: XY[]; kind: 'ink' | 'waiting' | 'laser';
   origin: XY; timer: ReturnType<typeof setTimeout> | null;
+  pen: PenStyle;
 }
 export interface AnnotationToolsOptions {
   host: HTMLElement;
@@ -30,14 +48,15 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   let mode: Mode = 'navigate';
   let active: PointerGesture | null = null;
   let suppressNextClick = false;
+  let pen = storedPenStyle();
   const layer = document.createElement('div');
   layer.className = 'annotation-layer';
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.classList.add('annotation-preview');
   const path = document.createElementNS(svg.namespaceURI, 'path');
   path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', '#e53935');
-  path.setAttribute('stroke-width', '4');
+  path.setAttribute('stroke', pen.color);
+  path.setAttribute('stroke-width', String(pen.width));
   path.setAttribute('stroke-linecap', 'round');
   path.setAttribute('stroke-linejoin', 'round');
   svg.append(path);
@@ -58,6 +77,39 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
     toolbar.append(control);
     return control;
   });
+  const setting = (label: string, entries: Array<[string, string]>, value: string): HTMLSelectElement => {
+    const field = document.createElement('label');
+    field.className = 'annotation-setting';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', `Pen ${label.toLowerCase()}`);
+    for (const [text, optionValue] of entries) {
+      const option = document.createElement('option');
+      option.textContent = text; option.value = optionValue;
+      select.append(option);
+    }
+    select.value = value;
+    // Dropdown arrow keys edit the setting rather than changing slides.
+    select.addEventListener('keydown', (event) => event.stopPropagation());
+    field.append(name, select);
+    toolbar.append(field);
+    return select;
+  };
+  const colorSelect = setting('Color', PEN_COLORS.map(([name, value]) => [name, value]), pen.color);
+  const widthSelect = setting('Width', PEN_WIDTHS.map((width) => [`${width} px`, String(width)]), String(pen.width));
+  const updatePen = (): void => {
+    cancel();
+    pen = {
+      color: PEN_COLORS.some(([, color]) => color === colorSelect.value) ? colorSelect.value : pen.color,
+      width: PEN_WIDTHS.some((width) => width === Number(widthSelect.value)) ? Number(widthSelect.value) : pen.width,
+    };
+    path.setAttribute('stroke', pen.color);
+    path.setAttribute('stroke-width', String(pen.width));
+    try { localStorage.setItem(PEN_PREFERENCE, JSON.stringify(pen)); } catch { /* Private browsing still permits drawing. */ }
+  };
+  colorSelect.addEventListener('change', updatePen);
+  widthSelect.addEventListener('change', updatePen);
   const cancel = (): void => {
     const id = active?.id;
     if (active?.timer !== null && active?.timer !== undefined) clearTimeout(active.timer);
@@ -104,7 +156,7 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   function emitOverlay(point: XY | null = null): void {
     const slide = options.slide();
     if (!slide || !options.onOverlay) return;
-    options.onOverlay({ slideId: slide.slide.id, laser: point, points: active?.kind === 'ink' ? [...active.points] : [] });
+    options.onOverlay({ slideId: slide.slide.id, laser: point, points: active?.kind === 'ink' ? [...active.points] : [], pen: active?.pen ?? pen });
   }
   const pointLaser = (point: XY): void => {
     const rect = host.getBoundingClientRect();
@@ -129,12 +181,18 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
     const point = position(event);
     if (!state || !point) return;
     const drawing = event.pointerType === 'pen' || (mode === 'pen' && event.pointerType !== 'touch');
-    if (drawing || mode === 'pen') consume(event);
+    if (drawing || mode === 'pen') {
+      consume(event);
+      if (document.activeElement instanceof HTMLElement && toolbar.contains(document.activeElement)) document.activeElement.blur();
+    }
     const draft: PointerGesture = {
       id: event.pointerId, slideId: state.slide.id, points: [point], kind: drawing ? 'ink' : 'waiting',
       origin: { x: event.clientX, y: event.clientY }, timer: null,
+      pen: { ...pen },
     };
     active = draft;
+    path.setAttribute('stroke', draft.pen.color);
+    path.setAttribute('stroke-width', String(draft.pen.width));
     if (drawing) host.setPointerCapture(event.pointerId);
     draft.timer = setTimeout(() => {
       if (active !== draft) return;
@@ -187,7 +245,7 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
     const state = options.slide();
     cancel();
     if (draft.kind !== 'ink' || state?.slide.id !== draft.slideId) return;
-    const stroke = annotationStroke(state.slide, draft.points);
+    const stroke = annotationStroke(state.slide, draft.points, draft.pen.color, draft.pen.width);
     if (stroke) options.save(draft.slideId, stroke);
   };
   const suppressClick = (event: MouseEvent): void => {
@@ -237,6 +295,8 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
       svg.style.left = `${rect.left - bounds.left}px`; svg.style.top = `${rect.top - bounds.top}px`;
       svg.style.width = `${rect.width}px`; svg.style.height = `${rect.height}px`;
       svg.setAttribute('viewBox', `0 0 ${state.canvas.w} ${state.canvas.h}`);
+      path.setAttribute('stroke', /^#[0-9a-f]{6}$/i.test(overlay.pen?.color ?? '') ? overlay.pen!.color : '#e53935');
+      path.setAttribute('stroke-width', String(overlay.pen && Number.isFinite(overlay.pen.width) ? Math.max(1, Math.min(20, overlay.pen.width)) : 4));
       if (overlay.points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) {
         path.setAttribute('d', overlay.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '));
       }

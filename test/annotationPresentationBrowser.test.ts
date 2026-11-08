@@ -76,11 +76,21 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
       await eventually(() => driver.evaluate<boolean>(`!!document.querySelector('footer .annotation-toolbar')`), 'presenter controls did not mount');
     }
     await eventually(() => driver.evaluate<boolean>(`!!document.querySelector('.annotation-toolbar')`), 'tools did not mount');
+    for (const [width, height] of [[1024, 768], [800, 600], [640, 480]]) {
+      await driver.call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await eventually(() => driver.evaluate<boolean>(`[...document.querySelectorAll('.annotation-toolbar button, .annotation-toolbar select')].every((control) => {
+        const r = control.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1;
+      })`), 'presentation controls were clipped at a smaller screen size');
+    }
+    await driver.call('Emulation.clearDeviceMetricsOverride');
     const rect = await driver.evaluate<{ x: number; y: number; width: number; height: number }>(`(() => {
       const r = document.querySelector('.speaker-current .stage, .player-root > .stage').getBoundingClientRect();
       return { x: r.left, y: r.top, width: r.width, height: r.height };
     })()`);
     const points = [0.2, 0.35, 0.5, 0.65].map((t) => ({ x: rect.x + rect.width * t, y: rect.y + rect.height * (t < 0.4 ? 0.3 : 0.5) }));
+    expect(await driver.pressOptionKey('[aria-label="Pen color"]', 'b')).toBe('#1976d2');
+    await driver.choose('[aria-label="Pen width"]', '12');
     await driver.click('[data-annotation-mode="pen"]');
     // A real held stylus, followed by a held finger: neither may save ink or
     // advance the slide, and releasing each restores the selected Pen tool.
@@ -106,12 +116,14 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
     for (let i = 0; i < points.length; i++) await driver.call('Input.dispatchMouseEvent', {
       type: i ? 'mouseMoved' : 'mousePressed', ...points[i], button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1,
     });
+    await eventually(() => audience.evaluate<string>(`document.querySelector('.annotation-preview path')?.getAttribute('stroke')`), 'pen color did not reach the audience preview', (color) => color === '#1976d2');
+    expect(await audience.evaluate<string>(`document.querySelector('.annotation-preview path')?.getAttribute('stroke-width')`)).toBe('12');
     await driver.call('Input.dispatchMouseEvent', {
       type: 'mouseReleased', ...points.at(-1)!, button: 'left', buttons: 0, pointerType: 'pen', clickCount: 1,
     });
     await eventually(async () => (await loadDeck(deckDir)).slides[0].elements.length, 'annotation was not saved', (count) => count === 1);
     const saved = await loadDeck(deckDir);
-    expect(saved.slides[0].elements[0]).toMatchObject({ type: 'shape', shape: 'path', stroke: '#e53935' });
+    expect(saved.slides[0].elements[0]).toMatchObject({ type: 'shape', shape: 'path', stroke: '#1976d2', strokeWidth: 12 });
     expect(saved.slides[1].elements).toHaveLength(0);
     await driver.click('[data-annotation-mode="laser"]');
     await driver.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...points[1], button: 'none', buttons: 0 });

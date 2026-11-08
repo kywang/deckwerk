@@ -6,7 +6,7 @@ released packages do not cover, on an architecture we do not yet publish, or
 you simply want to run your own build.
 
 ```bash
-git clone https://github.com/vsitzmann/deckwerk.git
+git clone https://github.com/kywang/deckwerk.git
 cd deckwerk
 npm ci
 npm run dist

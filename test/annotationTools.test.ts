@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyDeck, parseDeck, type ShapeEl } from '../src/shared/deck.js';
 import { annotationStroke } from '../src/shared/annotations.js';
 import { pathOnCanvas } from '../src/shared/pathNodes.js';
 import type { AnnotationOverlay } from '../src/shared/ipc.js';
-import { createAnnotationTools } from '../src/renderer/player/annotationTools.js';
+import { createAnnotationTools, PEN_COLORS, PEN_WIDTHS } from '../src/renderer/player/annotationTools.js';
 import { buildPrintPages } from '../src/renderer/print/pages.js';
 import { installCanvasDomShims } from './support/canvasHarness.js';
 
+beforeEach(() => localStorage.removeItem('deckwerk.annotation.pen'));
 let destroy: (() => void) | undefined;
 afterEach(() => { destroy?.(); destroy = undefined; vi.useRealTimers(); document.body.replaceChildren(); });
 
@@ -34,6 +35,62 @@ function setup(onOverlay?: (overlay: AnnotationOverlay) => void) {
 }
 
 describe('presentation annotation tools', () => {
+  it('uses selected colour and width for the preview, saved stroke and PDF pages', () => {
+    const { host, pointer, save, deck } = setup();
+    const set = (label: string, value: string) => {
+      const select = host.querySelector<HTMLSelectElement>(`[aria-label="Pen ${label}"]`)!;
+      select.value = value; select.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    set('color', '#1976d2'); set('width', '12');
+    pointer('pointerdown', 100, 100, 1, 'pen');
+    pointer('pointermove', 300, 200, 1, 'pen');
+    const preview = host.querySelector('.annotation-preview path')!;
+    expect(preview.getAttribute('stroke')).toBe('#1976d2');
+    expect(preview.getAttribute('stroke-width')).toBe('12');
+    pointer('pointerup', 400, 200, 1, 'pen');
+    expect(save.mock.calls[0][1]).toMatchObject({ stroke: '#1976d2', strokeWidth: 12 });
+    const container = document.createElement('div');
+    buildPrintPages(container, { deck: parseDeck(JSON.parse(JSON.stringify(deck))), mode: 'final', resolveSrc: (src) => src });
+    expect(container.querySelector('svg path[stroke="#1976d2"]')?.getAttribute('stroke')).toBe('#1976d2');
+    expect(container.querySelector('svg path[stroke="#1976d2"]')?.getAttribute('stroke-width')).toBe('12');
+  });
+
+  it('mirrors selected pen settings and remembers them when a presentation is reopened', () => {
+    const audience = setup();
+    const presenter = setup((overlay) => audience.tools.showOverlay(overlay));
+    const color = presenter.host.querySelector<HTMLSelectElement>('[aria-label="Pen color"]')!;
+    const width = presenter.host.querySelector<HTMLSelectElement>('[aria-label="Pen width"]')!;
+    color.value = '#8e24aa'; color.dispatchEvent(new Event('change'));
+    width.value = '20'; width.dispatchEvent(new Event('change'));
+    presenter.pointer('pointerdown', 100, 100, 1, 'pen');
+    presenter.pointer('pointermove', 300, 200, 1, 'pen');
+    expect(audience.host.querySelector('.annotation-preview path')?.getAttribute('stroke')).toBe('#8e24aa');
+    expect(audience.host.querySelector('.annotation-preview path')?.getAttribute('stroke-width')).toBe('20');
+    presenter.tools.destroy(); audience.tools.destroy(); destroy = undefined;
+    const reopened = setup();
+    expect(reopened.host.querySelector<HTMLSelectElement>('[aria-label="Pen color"]')!.value).toBe('#8e24aa');
+    expect(reopened.host.querySelector<HTMLSelectElement>('[aria-label="Pen width"]')!.value).toBe('20');
+    const navigate = vi.fn();
+    window.addEventListener('keydown', navigate);
+    reopened.host.querySelector('select')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(navigate).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', navigate);
+  });
+
+  it('uses safe defaults for broken stored settings and still draws when storage is unavailable', () => {
+    localStorage.setItem('deckwerk.annotation.pen', JSON.stringify({ color: 'invalid', width: -5 }));
+    const { host, pointer, save } = setup();
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="Pen width"]')!.value).toBe('4');
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+    const width = host.querySelector<HTMLSelectElement>('[aria-label="Pen width"]')!;
+    width.value = '8'; width.dispatchEvent(new Event('change'));
+    pointer('pointerdown', 100, 100, 1, 'pen');
+    pointer('pointermove', 300, 200, 1, 'pen');
+    pointer('pointerup', 400, 200, 1, 'pen');
+    expect(save.mock.calls[0][1]).toMatchObject({ stroke: '#e53935', strokeWidth: 8 });
+    storage.mockRestore();
+  });
+
   it('relays presenter ink and laser to a scaled audience overlay with hidden controls', () => {
     const audience = setup();
     audience.tools.setToolbarVisible(false);
@@ -159,6 +216,10 @@ describe('presentation annotation tools', () => {
       seed = (seed * 16807) % 2147483647;
       const action = seed % 4;
       choose('pen');
+      const color = host.querySelector<HTMLSelectElement>('[aria-label="Pen color"]')!;
+      color.value = PEN_COLORS[seed % PEN_COLORS.length][1]; color.dispatchEvent(new Event('change'));
+      const width = host.querySelector<HTMLSelectElement>('[aria-label="Pen width"]')!;
+      width.value = String(PEN_WIDTHS[seed % PEN_WIDTHS.length]); width.dispatchEvent(new Event('change'));
       pointer('pointerdown', 100, 100, 1, 'pen');
       if (action === 0) {
         vi.advanceTimersByTime(500);
@@ -173,6 +234,7 @@ describe('presentation annotation tools', () => {
       pointer('click', 500, 300, 1, 'pen');
       vi.advanceTimersByTime(600);
       expect(save).toHaveBeenCalledTimes(expectedInk);
+      if (action === 1) expect(save.mock.calls.at(-1)![1]).toMatchObject({ stroke: color.value, strokeWidth: Number(width.value) });
       expect(host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(true);
       expect(audience.host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(true);
       expect(audience.save).not.toHaveBeenCalled();

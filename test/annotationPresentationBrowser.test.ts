@@ -24,7 +24,7 @@ afterEach(async () => {
 
 /** Real pen input through Chromium, both persistence transports, then a real PDF. */
 describe.skipIf(!electronBinary)('saved presentation annotations', () => {
-  for (const backend of ['desktop', 'browser'] as const) it(`${backend}: saves stylus ink and keeps the laser out of the PDF`, async () => {
+  for (const backend of ['desktop', 'browser', 'desktop-speaker', 'browser-speaker'] as const) it(`${backend}: saves stylus ink and keeps the laser out of the PDF`, async () => {
     work = await mkdtemp(join(tmpdir(), 'deckwerk-annotation-test-'));
     const decksRoot = join(work, 'decks');
     const deckDir = join(decksRoot, 'talk');
@@ -35,8 +35,10 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
     await writeFile(join(deckDir, 'theme.css'), '.slide { background: #fff; }');
     const clientDir = await collabClientDir();
     let audience: Cdp;
+    let speaker: Cdp | null = null;
+    const withSpeaker = backend.endsWith('-speaker');
     let editor: Cdp | null = null;
-    if (backend === 'desktop') {
+    if (backend.startsWith('desktop')) {
       const appDir = join(work, 'app');
       await materializeDesktopApp(appDir, 'deckwerk-annotation-test');
       const app = await launchDesktopApp(appDir, [deckDir], { profileDir: join(work, 'profile'), cwd: appDir });
@@ -44,9 +46,14 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
       const target = await findTarget(app.debugPort, isEditorTarget, app.log);
       editor = await Cdp.connect(target.webSocketDebuggerUrl!); connections.push(editor);
       await eventually(() => editor!.evaluate<boolean>(`document.querySelectorAll('.rail-item').length === 2`), 'editor did not load');
-      await editor.clickByText('button', 'Present', 'Present');
+      if (withSpeaker) await editor.evaluate('window.api.present(0, { speakerView: true })');
+      else await editor.evaluate(`(async () => { const display = (await window.api.listDisplays()).find((d) => d.primary); await window.api.present(0, { audienceDisplayId: display.id, presenterDisplayId: display.id }); })()`);
       const present = await findTarget(app.debugPort, (t) => t.url.includes('/present/index.html'), app.log);
       audience = await Cdp.connect(present.webSocketDebuggerUrl!);
+      if (withSpeaker) {
+        const target = await findTarget(app.debugPort, (t) => t.url.includes('/presenter/index.html'), app.log);
+        speaker = await Cdp.connect(target.webSocketDebuggerUrl!);
+      }
     } else {
       server = await startCollabServer({ rootDir: decksRoot, clientDir, host: '127.0.0.1', port: 0 });
       const url = `http://127.0.0.1:${server.port}/present.html?deck=talk&name=Annotator`;
@@ -54,55 +61,78 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
       child = browser.process;
       const target = await findTarget(browser.debugPort, (t) => t.url.includes('present.html'), browser.log);
       audience = await Cdp.connect(target.webSocketDebuggerUrl!);
+      if (withSpeaker) {
+        const speakerUrl = `${url}&role=speaker`;
+        await audience.evaluate(`window.open(${JSON.stringify(speakerUrl)}, 'speaker') !== null`);
+        const target = await findTarget(browser.debugPort, (t) => t.url.includes('role=speaker'), browser.log);
+        speaker = await Cdp.connect(target.webSocketDebuggerUrl!);
+      }
     }
     connections.push(audience);
-    await eventually(() => audience.evaluate<boolean>(`!!document.querySelector('.annotation-toolbar')`), 'tools did not mount');
-    const rect = await audience.evaluate<{ x: number; y: number; width: number; height: number }>(`(() => {
-      const r = document.querySelector('.stage').getBoundingClientRect();
+    if (speaker) connections.push(speaker);
+    const driver = speaker ?? audience;
+    if (speaker) {
+      await eventually(() => audience.evaluate<boolean>(`document.querySelector('.annotation-toolbar')?.hidden === true`), 'audience controls remained visible');
+      await eventually(() => driver.evaluate<boolean>(`!!document.querySelector('footer .annotation-toolbar')`), 'presenter controls did not mount');
+    }
+    await eventually(() => driver.evaluate<boolean>(`!!document.querySelector('.annotation-toolbar')`), 'tools did not mount');
+    const rect = await driver.evaluate<{ x: number; y: number; width: number; height: number }>(`(() => {
+      const r = document.querySelector('.speaker-current .stage, .player-root > .stage').getBoundingClientRect();
       return { x: r.left, y: r.top, width: r.width, height: r.height };
     })()`);
     const points = [0.2, 0.35, 0.5, 0.65].map((t) => ({ x: rect.x + rect.width * t, y: rect.y + rect.height * (t < 0.4 ? 0.3 : 0.5) }));
-    await audience.click('[data-annotation-mode="pen"]');
+    await driver.click('[data-annotation-mode="pen"]');
     // A real held stylus, followed by a held finger: neither may save ink or
     // advance the slide, and releasing each restores the selected Pen tool.
     for (const input of ['pen', 'touch']) {
-      if (input === 'pen') await audience.call('Input.dispatchMouseEvent', {
+      if (input === 'pen') await driver.call('Input.dispatchMouseEvent', {
         type: 'mousePressed', ...points[0], button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1,
       });
-      else await audience.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [points[0]] });
-      await eventually(() => audience.evaluate<boolean>(`!document.querySelector('.presentation-laser').hidden`), 'long press did not activate the laser');
+      else await driver.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [points[0]] });
+      await eventually(() => driver.evaluate<boolean>(`!document.querySelector('.presentation-laser').hidden`), 'long press did not activate the laser');
       if (input === 'pen') {
-        await audience.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...points[2], button: 'left', buttons: 1, pointerType: 'pen' });
-        await audience.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...points[2], button: 'left', buttons: 0, pointerType: 'pen', clickCount: 1 });
+        await driver.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...points[2], button: 'left', buttons: 1, pointerType: 'pen' });
+        await driver.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...points[2], button: 'left', buttons: 0, pointerType: 'pen', clickCount: 1 });
       } else {
-        await audience.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [points[2]] });
-        await audience.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await driver.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [points[2]] });
+        await driver.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       }
-      expect(await audience.evaluate<boolean>(`document.querySelector('.presentation-laser').hidden`)).toBe(true);
+      await eventually(() => audience.evaluate<boolean>(`document.querySelector('.presentation-laser').hidden`), 'audience laser remained after release');
       expect(await audience.evaluate<string>(`document.querySelector('.stage .slide').dataset.slideId`)).toBe(deck.slides[0].id);
-      expect(await audience.evaluate<string>(`document.querySelector('[data-annotation-mode="pen"]').getAttribute('aria-pressed')`)).toBe('true');
+      expect(await driver.evaluate<string>(`document.querySelector('[data-annotation-mode="pen"]').getAttribute('aria-pressed')`)).toBe('true');
       expect((await loadDeck(deckDir)).slides[0].elements).toHaveLength(0);
     }
     // Drawing resumes immediately after lifting, without choosing a tool.
-    for (let i = 0; i < points.length; i++) await audience.call('Input.dispatchMouseEvent', {
+    for (let i = 0; i < points.length; i++) await driver.call('Input.dispatchMouseEvent', {
       type: i ? 'mouseMoved' : 'mousePressed', ...points[i], button: 'left', buttons: 1, pointerType: 'pen', clickCount: 1,
     });
-    await audience.call('Input.dispatchMouseEvent', {
+    await driver.call('Input.dispatchMouseEvent', {
       type: 'mouseReleased', ...points.at(-1)!, button: 'left', buttons: 0, pointerType: 'pen', clickCount: 1,
     });
     await eventually(async () => (await loadDeck(deckDir)).slides[0].elements.length, 'annotation was not saved', (count) => count === 1);
     const saved = await loadDeck(deckDir);
     expect(saved.slides[0].elements[0]).toMatchObject({ type: 'shape', shape: 'path', stroke: '#e53935' });
     expect(saved.slides[1].elements).toHaveLength(0);
-    await audience.click('[data-annotation-mode="laser"]');
-    await audience.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...points[1], button: 'none', buttons: 0 });
-    await audience.clickAt(points[1].x, points[1].y);
-    expect(await audience.evaluate<boolean>(`!document.querySelector('.presentation-laser').hidden`)).toBe(true);
+    await driver.click('[data-annotation-mode="laser"]');
+    await driver.call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...points[1], button: 'none', buttons: 0 });
+    await driver.clickAt(points[1].x, points[1].y);
+    await eventually(() => audience.evaluate<boolean>(`!document.querySelector('.presentation-laser').hidden`), 'audience laser did not mirror Presenter View');
     expect(await audience.evaluate<string>(`document.querySelector('.stage .slide').dataset.slideId`)).toBe(deck.slides[0].id);
+    if (speaker) {
+      const preview = await driver.call('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(tmpdir(), `deckwerk-presenter-controls-${backend}.png`), Buffer.from(preview.data, 'base64'));
+    }
     const capture = await audience.call('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(tmpdir(), `deckwerk-annotations-${backend}.png`), Buffer.from(capture.data, 'base64'));
-    await audience.key('v', 86); // Put laser down, keep the presentation.
-    expect(await audience.evaluate<boolean>(`document.querySelector('[data-annotation-mode="navigate"]').getAttribute('aria-pressed') === 'true'`)).toBe(true);
+    if (speaker) {
+      await driver.click('.speaker-grid');
+      await driver.click('.speaker-overview-slide[data-slide="1"]');
+      await eventually(() => audience.evaluate<string>(`document.querySelector('.stage .slide').dataset.slideId`), 'annotation layer blocked slide overview', (id) => id === 'second-slide');
+      await driver.click('.speaker-prev');
+      await eventually(() => audience.evaluate<string>(`document.querySelector('.stage .slide').dataset.slideId`), 'presenter did not return to annotated slide', (id) => id === deck.slides[0].id);
+    }
+    await driver.key('v', 86); // Put laser down, keep the presentation.
+    expect(await driver.evaluate<boolean>(`document.querySelector('[data-annotation-mode="navigate"]').getAttribute('aria-pressed') === 'true'`)).toBe(true);
     if (editor) {
       // Saved presentation ink is a normal undo unit in the owning editor.
       await editor.key('Escape', 27);

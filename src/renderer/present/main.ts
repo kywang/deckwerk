@@ -25,6 +25,8 @@ if (!root) throw new Error('missing #root');
 hideCursorWhenIdle(document.body);
 
 let player: Player | null = null;
+let annotationTools: ReturnType<typeof createAnnotationTools> | null = null;
+let speakerControls = false;
 let session: DeckSession | null = null;
 let range: PresentationRange | null = null;
 let themeLink: HTMLStyleElement | null = null;
@@ -81,6 +83,7 @@ function publish(): void {
 }
 
 function toggleBlank(): void {
+  annotationTools?.reset();
   player?.toggleBlank();
   publish();
 }
@@ -112,6 +115,7 @@ function start(nextSession: DeckSession): void {
     container: root!,
     resolveSrc: (src) => window.api.assetUrl(src),
     onCursor: (cursor, steps) => {
+      annotationTools?.reset();
       stepsOnSlide = steps;
       if (settlingBeforeResume) return;
       if (cursor.slide !== timedSlide) {
@@ -121,7 +125,7 @@ function start(nextSession: DeckSession): void {
       publish();
     },
   });
-  createAnnotationTools({
+  annotationTools = createAnnotationTools({
     host: root!,
     slide: () => {
       const slide = session?.deck.slides[player!.getCursor().slide];
@@ -135,6 +139,7 @@ function start(nextSession: DeckSession): void {
       player.setDeck(session.deck);
     },
   });
+  annotationTools.setToolbarVisible(!speakerControls);
   // Presenting from a skipped slide would put it on the projector anyway;
   // land on the nearest slide that is actually part of the talk.
   let first = Number.isFinite(startSlide) ? startSlide : 0;
@@ -198,6 +203,12 @@ function retreat(): void {
 }
 
 window.api.onPresentCommand((command: PresentationCommand) => {
+  if (command.type === 'annotationControls') {
+    speakerControls = command.presenter;
+    annotationTools?.setToolbarVisible(!speakerControls);
+    return;
+  }
+  if (command.type === 'annotationOverlay') { annotationTools?.showOverlay(command.overlay); return; }
   if (!player) return;
   if (command.type === 'next') advance();
   else if (command.type === 'prev') retreat();

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emptyDeck, parseDeck, type ShapeEl } from '../src/shared/deck.js';
 import { annotationStroke } from '../src/shared/annotations.js';
 import { pathOnCanvas } from '../src/shared/pathNodes.js';
+import type { AnnotationOverlay } from '../src/shared/ipc.js';
 import { createAnnotationTools } from '../src/renderer/player/annotationTools.js';
 import { buildPrintPages } from '../src/renderer/print/pages.js';
 import { installCanvasDomShims } from './support/canvasHarness.js';
@@ -10,7 +11,7 @@ import { installCanvasDomShims } from './support/canvasHarness.js';
 let destroy: (() => void) | undefined;
 afterEach(() => { destroy?.(); destroy = undefined; vi.useRealTimers(); document.body.replaceChildren(); });
 
-function setup() {
+function setup(onOverlay?: (overlay: AnnotationOverlay) => void) {
   installCanvasDomShims();
   const deck = emptyDeck('Annotated talk');
   const host = document.createElement('div');
@@ -20,7 +21,7 @@ function setup() {
   host.firstElementChild!.getBoundingClientRect = () => ({ left: 20, top: 30, width: 960, height: 540 }) as DOMRect;
   let current = 0;
   const save = vi.fn((slideId: string, stroke: ShapeEl) => deck.slides.find((s) => s.id === slideId)!.elements.push(stroke));
-  const tools = createAnnotationTools({ host, slide: () => ({ slide: deck.slides[current], canvas: deck.canvas }), save });
+  const tools = createAnnotationTools({ host, onOverlay, slide: () => ({ slide: deck.slides[current], canvas: deck.canvas }), save });
   destroy = tools.destroy;
   const pointer = (type: string, x: number, y: number, id = 1, pointerType = 'mouse', ctrlKey = false) => {
     const event = new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: id, button: 0, ctrlKey });
@@ -29,10 +30,35 @@ function setup() {
     return event;
   };
   const choose = (mode: string) => host.querySelector<HTMLButtonElement>(`[data-annotation-mode="${mode}"]`)!.click();
-  return { deck, host, save, pointer, choose, next: () => { current++; } };
+  return { deck, host, tools, save, pointer, choose, next: () => { current++; } };
 }
 
 describe('presentation annotation tools', () => {
+  it('relays presenter ink and laser to a scaled audience overlay with hidden controls', () => {
+    const audience = setup();
+    audience.tools.setToolbarVisible(false);
+    const presenter = setup((overlay) => audience.tools.showOverlay(overlay));
+    presenter.choose('laser');
+    presenter.pointer('pointermove', 500, 300);
+    const laser = audience.host.querySelector<HTMLElement>('.presentation-laser')!;
+    expect(laser.hidden).toBe(false);
+    expect(laser.style.left).toBe('500px');
+    expect(laser.style.top).toBe('300px');
+    expect(audience.host.querySelector<HTMLElement>('.annotation-toolbar')!.hidden).toBe(true);
+    presenter.choose('pen');
+    expect(laser.hidden).toBe(true);
+    presenter.pointer('pointerdown', 100, 100);
+    presenter.pointer('pointermove', 300, 200);
+    expect(audience.host.querySelector('.annotation-preview path')?.getAttribute('d')).toContain('L 560 340');
+    presenter.pointer('pointerup', 400, 250);
+    expect(presenter.save).toHaveBeenCalledTimes(1);
+    expect(audience.save).not.toHaveBeenCalled();
+    expect(audience.host.querySelector('.annotation-preview path')?.getAttribute('d')).toBe('');
+    audience.tools.showOverlay({ slideId: 'other-slide', laser: { x: 100, y: 100 }, points: [] });
+    expect(laser.hidden).toBe(true);
+    audience.tools.destroy();
+  });
+
   it.each(['pen', 'mouse', 'touch'])('holds %s for a temporary laser and restores Pen on release', (pointerType) => {
     vi.useFakeTimers();
     const { host, save, pointer, choose } = setup();
@@ -124,7 +150,9 @@ describe('presentation annotation tools', () => {
 
   it('fuzzes hold, draw and cancel gestures without saving laser movements', () => {
     vi.useFakeTimers();
-    const { host, pointer, save, choose } = setup();
+    const audience = setup();
+    audience.tools.setToolbarVisible(false);
+    const { host, pointer, save, choose } = setup((overlay) => audience.tools.showOverlay(overlay));
     let seed = 8317;
     let expectedInk = 0;
     for (let step = 0; step < 60; step++) {
@@ -146,7 +174,10 @@ describe('presentation annotation tools', () => {
       vi.advanceTimersByTime(600);
       expect(save).toHaveBeenCalledTimes(expectedInk);
       expect(host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(true);
+      expect(audience.host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(true);
+      expect(audience.save).not.toHaveBeenCalled();
     }
+    audience.tools.destroy();
   });
 
   it('draws a stylus stroke without advancing, in slide coordinates, then persists and prints it', () => {

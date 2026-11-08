@@ -212,7 +212,15 @@ export type AgentSessionState = AgentSessionConnection | { active: false };
 
 export type { AgentContextDraft, AgentRequest, AgentResponse };
 
+export interface AnnotationOverlay {
+  slideId: string;
+  laser: { x: number; y: number } | null;
+  points: { x: number; y: number }[];
+}
+
 export type PresentationCommand =
+  | { type: 'annotationControls'; presenter: boolean }
+  | { type: 'annotationOverlay'; overlay: AnnotationOverlay }
   | { type: 'next' | 'prev' | 'toggleBlank' | 'swapDisplays' | 'exit' }
   | { type: 'goTo'; slide: number }
   /** The presenter's video speed for the current slide (`>` / `<` / `=`). */

@@ -22,6 +22,7 @@ const view = createSpeakerView({
   host: document.getElementById('root')!,
   resolveSrc: (src) => window.api.assetUrl(src),
   onCommand: (command) => window.api.sendPresentCommand(command),
+  onAnnotation: (slideId, stroke) => window.api.editPresentAnnotation(slideId, stroke),
   onNotesChange: (slideId, notes) => window.api.editPresentNotes(slideId, notes),
 });
 
@@ -31,7 +32,11 @@ async function load(session: DeckSession): Promise<void> {
 }
 
 window.api.onDeckState((session) => void load(session));
-window.api.onPresentState((state) => view.setState(state));
+window.api.sendPresentCommand({ type: 'annotationControls', presenter: true });
+window.api.onPresentState((state) => {
+  window.api.sendPresentCommand({ type: 'annotationControls', presenter: true });
+  view.setState(state);
+});
 window.addEventListener('resize', () => view.refresh());
 bindSpeakerKeys(window, (command) => window.api.sendPresentCommand(command), view);
 

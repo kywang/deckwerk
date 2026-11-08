@@ -27,7 +27,10 @@ the bottom of the audience view:
   keys continue to navigate while a tool is selected.
 
 These controls work in the desktop audience window and browser presentations.
-Draw on the audience view; Speaker View remains the notes and navigation view.
+When Speaker View is open, its footer holds the Pen and Laser controls and the
+audience display hides them. Draw or point on the current-slide preview on your
+laptop: the audience sees the ink and laser at the corresponding slide position.
+Single-screen presentations keep the controls on the slide view.
 Palm contacts are ignored during a stroke, and a cancelled stroke is discarded.
 
 Use the existing **Export PDF** command to include saved annotations. Ink uses

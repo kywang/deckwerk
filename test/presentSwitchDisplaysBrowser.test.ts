@@ -130,6 +130,8 @@ describe.skipIf(!electronBinary || process.platform === 'win32')('switching disp
       'Speaker View did not follow the show to the third slide',
       (text) => text.includes('3'),
     );
+    await eventually(() => projectorWindow.evaluate<boolean>(`document.querySelector('.annotation-toolbar')?.hidden === true`), 'projector displayed annotation controls');
+    expect(await laptopWindow.evaluate<boolean>(`!!document.querySelector('footer .annotation-toolbar')`)).toBe(true);
     return { editor, projectorWindow, laptopWindow };
   }
 
@@ -160,6 +162,8 @@ describe.skipIf(!electronBinary || process.platform === 'win32')('switching disp
       'Speaker View did not render in the projector window',
       (ready) => ready,
     );
+    await eventually(() => laptopWindow.evaluate<boolean>(`document.querySelector('.annotation-toolbar')?.hidden === true`), 'swapped audience displayed annotation controls');
+    expect(await projectorWindow.evaluate<boolean>(`!!document.querySelector('footer .annotation-toolbar')`)).toBe(true);
     await projectorWindow.click('.speaker-next-button', 'Next');
     await eventually(
       async () => laptopWindow.evaluate<string[]>(SHOWN),

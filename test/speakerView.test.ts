@@ -405,7 +405,9 @@ describe('desktop Speaker View window', () => {
     document.querySelector<HTMLButtonElement>('.speaker-swap')!.click();
     document.querySelector<HTMLButtonElement>('.speaker-end')!.click();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', cancelable: true }));
-    expect(sent.map((command) => command.type)).toEqual(['swapDisplays', 'exit', 'next']);
+    expect(sent).toContainEqual({ type: 'annotationControls', presenter: true });
+    expect(document.querySelector('footer .annotation-toolbar')).not.toBeNull();
+    expect(sent.filter((command) => command.type !== 'annotationControls' && command.type !== 'annotationOverlay').map((command) => command.type)).toEqual(['swapDisplays', 'exit', 'next']);
 
     vi.unstubAllGlobals();
   });

@@ -9,3 +9,8 @@
 .annotation-toolbar .ui-button[aria-pressed="true"] { background: var(--accent); color: white; }
 .presentation-laser { position: absolute; width: 14px; height: 14px; transform: translate(-50%, -50%); border-radius: 50%; background: #ff3030; border: 2px solid #fff9; box-shadow: 0 0 6px 3px #ff2020, 0 0 18px 6px #ff202080; pointer-events: none; }
 @media print { .annotation-layer, .annotation-toolbar { display: none !important; } }
+
+.annotation-toolbar[hidden] { display: none; }
+.speaker-view footer .annotation-toolbar { position: static; transform: none; box-shadow: none; flex-shrink: 0; }
+
+.speaker-current.annotation-enabled { isolation: isolate; }

@@ -1,4 +1,4 @@
-import type { Deck } from '@shared/deck.js';
+import type { Deck, ShapeEl } from '@shared/deck.js';
 import type { PresentationCommand, PresentationState } from '@shared/ipc.js';
 import { resolveState } from '@shared/timeline.js';
 import { revealImagesWhenDecoded } from '../player/imageDecode.js';
@@ -7,6 +7,7 @@ import { applyStageScale, renderSlide, rewriteCssAssetUrls } from '../player/ren
 import { prepareCodeBlocks } from '../player/codeRender.js';
 import { applyStaticSlideState } from '../player/staticState.js';
 import { formatElapsed, formatWallClock, presentationLabel } from './model.js';
+import { createAnnotationTools } from '../player/annotationTools.js';
 import { videoRateChangeForKey } from '../player/videoRate.js';
 
 /**
@@ -25,6 +26,7 @@ export interface SpeakerViewOptions {
   host: HTMLElement;
   resolveSrc: (src: string) => string;
   onCommand: (command: PresentationCommand) => void;
+  onAnnotation?: (slideId: string, stroke: ShapeEl) => void;
   onNotesChange?: (slideId: string, notes: string) => void;
   /**
    * Whether to offer the audience/presenter role swap. Both the desktop and
@@ -149,6 +151,22 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
   let returnToRail = false;
   let shownNotesSlideId: string | null = null;
   let committingNotes = false;
+  const annotationTools = options.onAnnotation ? createAnnotationTools({
+    host: currentHost,
+    toolbarHost: footer,
+    slide: () => {
+      const slide = deck?.slides[state.cursor.slide];
+      return slide && deck && !state.blanked ? { slide, canvas: deck.canvas } : null;
+    },
+    onOverlay: (overlay) => onCommand({ type: 'annotationOverlay', overlay }),
+    save: (slideId, stroke) => {
+      if (!deck) return;
+      deck = { ...deck, slides: deck.slides.map((slide) => slide.id === slideId
+        ? { ...slide, elements: [...slide.elements, stroke] } : slide) };
+      render();
+      options.onAnnotation?.(slideId, stroke);
+    },
+  }) : null;
 
   function commitNotes(): void {
     if (committingNotes) return;
@@ -180,7 +198,8 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
     // which would keep the whole discarded subtree alive — one leaked stage per
     // step, for the length of the talk. Hand them back before dropping them.
     releasePreviewVideos(target);
-    target.replaceChildren();
+    if (target === currentHost && annotationTools) target.querySelector('.stage')?.remove();
+    else target.replaceChildren();
     const slide = deck?.slides[slideIndex];
     if (!slide) return;
     const stage = document.createElement('div');
@@ -366,6 +385,7 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
       theme.textContent = rewriteCssAssetUrls(css, resolveSrc);
     },
     setState(next) {
+      if (next.cursor.slide !== state.cursor.slide || next.cursor.step !== state.cursor.step || next.blanked !== state.blanked) annotationTools?.reset();
       state = next;
       render();
       tick();
@@ -387,6 +407,7 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
     isOverviewOpen: () => overviewMode !== 'closed',
     isGridOpen: () => overviewMode === 'grid',
     destroy() {
+      annotationTools?.destroy();
       commitNotes();
       clearInterval(clock);
       clearOverview();

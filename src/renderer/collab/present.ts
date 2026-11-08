@@ -179,6 +179,7 @@ const stageHost = document.getElementById('stage')!;
 const speakerHost = document.getElementById('speaker')!;
 
 let annotationTools: ReturnType<typeof createAnnotationTools> | null = null;
+let speakerControls = false;
 let deck: Deck | null = null;
 let themeCss = '';
 let player: Player | null = null;
@@ -258,6 +259,7 @@ function resolveSrc(src: string): string {
 /* --- audience -------------------------------------------------------------- */
 
 function publishState(cursor: Cursor, steps: number): void {
+  annotationTools?.reset();
   if (cursor.slide !== timedSlide) {
     timedSlide = cursor.slide;
     slideStartedAt = Date.now();
@@ -352,6 +354,7 @@ function mountAudience(): void {
       applyDeck(nextDeck, null, 'session');
     },
   });
+  annotationTools?.setToolbarVisible(!speakerControls);
   unbindAudienceKeys = bindPresentKeys(window, player, {
     onExit: exitPresentation,
     onNext: advance,
@@ -407,6 +410,13 @@ function mountSpeaker(): void {
     host: speakerHost,
     resolveSrc,
     onCommand: sendCommand,
+    onAnnotation: (slideId, stroke) => {
+      if (!deck) return;
+      const nextDeck = { ...deck, slides: deck.slides.map((slide) => slide.id === slideId
+        ? { ...slide, elements: [...slide.elements, stroke] } : slide) };
+      bridge.localEdit(deck, nextDeck, 'Annotate slide');
+      applyDeck(nextDeck, null, 'session');
+    },
     onNotesChange: (slideId, notes) => {
       if (!deck) return;
       const slides = deck.slides.map((slide) => slide.id === slideId ? { ...slide, notes } : slide);
@@ -501,6 +511,8 @@ function applyDeck(nextDeck: Deck, nextThemeCss: string | null, source: 'seed' |
 
 bus?.subscribe((message) => {
   if (message.kind === 'hello') {
+    if (message.role === 'speaker') { speakerControls = true; annotationTools?.setToolbarVisible(false); }
+    if (role === 'speaker' && message.role === 'audience') bus.post({ kind: 'command', command: { type: 'annotationControls', presenter: true } });
     // Whichever surface already has the deck seeds the other, so the second
     // window paints from memory instead of waiting out its own handshake.
     if (!deck) return;
@@ -545,7 +557,9 @@ bus?.subscribe((message) => {
   // A command is the speaker's; only the audience acts on it.
   if (role !== 'audience' || !player) return;
   const command = message.command;
-  if (command.type === 'goTo') runCommand(command);
+  if (command.type === 'annotationOverlay') annotationTools?.showOverlay(command.overlay);
+  else if (command.type === 'annotationControls') { speakerControls = command.presenter; annotationTools?.setToolbarVisible(!speakerControls); }
+  else if (command.type === 'goTo') runCommand(command);
   else if (command.type === 'next' || command.type === 'prev' || command.type === 'toggleBlank') {
     runCommand({ type: command.type });
   } else if (command.type === 'exit') {
@@ -568,7 +582,7 @@ function runCommand(command: RemoteCommand): void {
   }
   if (command.type === 'next') advance();
   else if (command.type === 'prev') retreat();
-  else if (command.type === 'toggleBlank') player.toggleBlank();
+  else if (command.type === 'toggleBlank') { annotationTools?.reset(); player.toggleBlank(); }
   else {
     player.goToSlide(range
       ? Math.min(Math.max(command.slide, range.start), range.end)

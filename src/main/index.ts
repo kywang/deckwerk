@@ -1342,7 +1342,7 @@ function registerHandlers(): void {
   });
   ipcMain.on(IPC.presentAnnotation, (event, edit) => {
     const state = ownerOf(event.sender);
-    if (!state || event.sender !== state.present?.webContents) return;
+    if (!state || (event.sender !== state.present?.webContents && event.sender !== state.presenter?.webContents)) return;
     if (typeof edit?.slideId !== 'string') return;
     const stroke = ElementSchema.safeParse(edit.stroke);
     if (!stroke.success || stroke.data.type !== 'shape' || stroke.data.shape !== 'path') return;

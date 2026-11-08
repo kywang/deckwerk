@@ -7,6 +7,9 @@ on:
       - 'src/renderer/player/annotation*'
       - 'src/renderer/player/liveInk.ts'
       - 'src/renderer/editor/canvas.ts'
+      - 'packaging/linux/**'
+      - 'electron-builder.config.cjs'
+      - 'test/linuxSandbox.test.ts'
       - 'test/liveInk.test.ts'
       - 'test/pathShapeCanvas.test.ts'
       - 'src/renderer/presenter/**'
@@ -36,11 +39,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - name: Pen settings and presenter component tests
-        run: npx vitest run test/annotationTools.test.ts test/speakerView.test.ts test/liveInk.test.ts test/pathShapeCanvas.test.ts
+        run: npx vitest run test/annotationTools.test.ts test/speakerView.test.ts test/liveInk.test.ts test/pathShapeCanvas.test.ts test/linuxSandbox.test.ts
       - name: Configure Electron sandbox
         run: |
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+          # Exercise the same exact-path AppArmor setup shipped to Ubuntu users.
+          sudo bash packaging/linux/setup-sandbox.sh node_modules/electron/dist/electron
+          # Keep the helper unprivileged: successful native startup must use userns.
+          chmod 0755 node_modules/electron/dist/chrome-sandbox
       - name: Desktop, browser, external-display and PDF tests
         env:
           CI_NO_WINDOW_MANAGER: '1'

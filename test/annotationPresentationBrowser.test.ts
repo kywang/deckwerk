@@ -180,6 +180,14 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
       expect(await driver.evaluate<string>(`document.querySelector('[data-annotation-mode="pen"]').getAttribute('aria-pressed')`)).toBe('true');
       expect((await loadDeck(deckDir)).slides[0].elements).toHaveLength(0);
     }
+    // Linux digitizers may report their stylus as touch. Explicit Pen accepts
+    // those contacts in both the audience window and the presenter preview.
+    await driver.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [points[0]] });
+    await driver.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [points[2]] });
+    await eventually(() => audience.evaluate<string>(`document.querySelector('.annotation-preview path')?.getAttribute('d') ?? ''`), 'touch-reported stylus did not draw', Boolean);
+    await driver.call('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+    await eventually(() => audience.evaluate<string>(`document.querySelector('.annotation-preview path')?.getAttribute('d') ?? ''`), 'cancelled touch ink remained', (d) => !d);
+    expect((await loadDeck(deckDir)).slides[0].elements).toHaveLength(0);
     // Drawing resumes immediately after lifting, without choosing a tool.
     const expectedTail = await driver.evaluate<number[]>(`(() => {
       const r = document.querySelector('.speaker-current .stage, .player-root > .stage').getBoundingClientRect();

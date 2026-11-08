@@ -380,6 +380,19 @@ describe('editing a path\'s points', () => {
 });
 
 describe('drawing with the pencil', () => {
+  it('keeps pressure-bearing pen samples even when Linux reports no button held', () => {
+    const { canvas, host, store } = setup();
+    canvas.startPencil();
+    pointer(host, 'pointerdown', { x: 100, y: 100 });
+    const sample = new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 300, clientY: 200, buttons: 0 });
+    Object.defineProperties(sample, { pointerType: { value: 'pen' }, pressure: { value: 0.7 } });
+    host.dispatchEvent(sample);
+    pointer(host, 'pointerup', { x: 100, y: 100 });
+    const stroke = store.slide!.elements[0] as ShapeEl;
+    expect(pathOnCanvas(stroke)![0].nodes.length).toBeGreaterThan(1);
+    expect(pathOnCanvas(stroke)![0].nodes.some((node) => node.x >= 299)).toBe(true);
+  });
+
   beforeEach(() => document.body.replaceChildren());
 
   it('retains the same live overlay through rapid input and caches the stroke projection', () => {

@@ -68,6 +68,31 @@ sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 \
 Installing the `.deb` this build produces pulls those in for you; the
 `.AppImage` does not, so install them first if you plan to use it.
 
+### Ubuntu: “No usable sandbox”
+
+Ubuntu restricts user namespaces for unprofiled executables. For an unpacked
+build launched as `./deckwerk`, configure an AppArmor exception for that exact
+executable once, then launch normally:
+
+```bash
+sudo bash ./setup-sandbox.sh ./deckwerk
+./deckwerk
+```
+
+The script is shipped alongside Linux builds. From a source checkout, use:
+
+```bash
+sudo bash packaging/linux/setup-sandbox.sh node_modules/electron/dist/electron
+npm run dev
+```
+
+Run setup again if you move the executable. To inspect the profile before
+installing it, run the script with `--print-profile` before the executable path.
+It leaves the system-wide namespace restrictions enabled. The `.deb` installer
+also configures the root-owned Chromium sandbox helper automatically.
+
+See Chromium's [AppArmor explanation](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
+
 ## Running without packaging
 
 To use or hack on DeckWerk without producing an installer:

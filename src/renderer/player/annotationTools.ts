@@ -229,7 +229,9 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
     const state = options.slide();
     const point = position(event);
     if (!state || !point) return;
-    const drawing = event.pointerType === 'pen' || (mode === 'pen' && event.pointerType !== 'touch');
+    // Some Linux digitizers expose their stylus as touch. Explicit Pen mode
+    // accepts either; Navigate still leaves ordinary touch gestures alone.
+    const drawing = event.pointerType === 'pen' || mode === 'pen';
     if (drawing || mode === 'pen') {
       consume(event);
       if (document.activeElement instanceof HTMLElement && toolbar.contains(document.activeElement)) document.activeElement.blur();

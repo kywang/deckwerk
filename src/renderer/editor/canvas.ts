@@ -9019,7 +9019,8 @@ export function measureTextToSize(
  * browser did not set is not a device that can say either way.
  */
 export function isHoverMove(ev: PointerEvent): boolean {
-  return ev.buttons === 0 && (ev.pointerType === 'mouse' || ev.pointerType === 'pen');
+  return ev.buttons === 0 && (ev.pointerType === 'mouse'
+    || (ev.pointerType === 'pen' && !(ev.pressure > 0)));
 }
 
 /** Whether a point is inside the visible crop window of a media element. */

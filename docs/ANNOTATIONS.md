@@ -70,3 +70,8 @@ The Linux annotation CI includes a six-times CPU-throttled stylus regression,
 long-stroke rendering checks and editor/presentation drawing tests. It exercises
 the same code used on lower-powered devices, but cannot reproduce every tablet's
 display driver or hardware latency.
+
+On Linux, if the digitizer reports stylus contacts as touch, select **Pen** in
+presentation mode (or **Pencil** in the editor). Touch contacts then draw ink;
+Navigate mode retains ordinary touch navigation. Holding still still activates
+the temporary laser in presentation mode.

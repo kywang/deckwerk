@@ -192,12 +192,10 @@ describe('presentation annotation tools', () => {
     expect(laser.hidden).toBe(true);
     expect(save).not.toHaveBeenCalled();
     expect(host.querySelector('[data-annotation-mode="pen"]')?.getAttribute('aria-pressed')).toBe('true');
-    if (pointerType !== 'touch') {
-      pointer('pointerdown', 100, 100, 1, pointerType);
-      pointer('pointermove', 300, 200, 1, pointerType);
-      pointer('pointerup', 400, 200, 1, pointerType);
-      expect(save).toHaveBeenCalledTimes(1);
-    }
+    pointer('pointerdown', 100, 100, 1, pointerType);
+    pointer('pointermove', 300, 200, 1, pointerType);
+    pointer('pointerup', 400, 200, 1, pointerType);
+    expect(save).toHaveBeenCalledTimes(1);
   });
 
   it('preserves short Navigate taps and suppresses navigation after a long touch', () => {
@@ -279,18 +277,19 @@ describe('presentation annotation tools', () => {
       color.value = PEN_COLORS[seed % PEN_COLORS.length][1]; color.dispatchEvent(new Event('change'));
       const width = host.querySelector<HTMLSelectElement>('[aria-label="Pen width"]')!;
       width.value = String(PEN_WIDTHS[seed % PEN_WIDTHS.length]); width.dispatchEvent(new Event('change'));
-      pointer('pointerdown', 100, 100, 1, 'pen');
+      const device = step % 2 ? 'touch' : 'pen';
+      pointer('pointerdown', 100, 100, 1, device);
       if (action === 0) {
         advance(500);
-        pointer('pointermove', 500, 300, 1, 'pen');
+        pointer('pointermove', 500, 300, 1, device);
       } else if (action === 1) {
-        pointer('pointermove', 200, 150, 1, 'pen');
+        pointer('pointermove', 200, 150, 1, device);
         advance(800);
         expectedInk++;
-      } else if (action === 2) pointer('pointercancel', 100, 100, 1, 'pen');
+      } else if (action === 2) pointer('pointercancel', 100, 100, 1, device);
       else window.dispatchEvent(new Event('blur'));
-      pointer('pointerup', 500, 300, 1, 'pen');
-      pointer('click', 500, 300, 1, 'pen');
+      pointer('pointerup', 500, 300, 1, device);
+      pointer('click', 500, 300, 1, device);
       advance(600);
       expect(save).toHaveBeenCalledTimes(expectedInk);
       if (action === 1) expect(save.mock.calls.at(-1)![1]).toMatchObject({ stroke: color.value, strokeWidth: Number(width.value) });

@@ -150,6 +150,7 @@ module.exports = {
   },
 
   linux: {
+    extraFiles: [{ from: 'packaging/linux/setup-sandbox.sh', to: 'setup-sandbox.sh' }],
     category: 'Office',
     icon: 'resources/deckwerk-icon.png',
     executableName: 'deckwerk',
@@ -174,6 +175,7 @@ module.exports = {
   },
 
   deb: {
+    afterInstall: 'packaging/linux/after-install.tpl',
     packageName: 'deckwerk',
     // Debian convention, and what the apt repo indexes by.
     artifactName: 'deckwerk_${version}_${arch}.${ext}',

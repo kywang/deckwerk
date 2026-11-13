@@ -1344,6 +1344,10 @@ function registerHandlers(): void {
     const state = ownerOf(event.sender);
     if (!state || (event.sender !== state.present?.webContents && event.sender !== state.presenter?.webContents)) return;
     if (typeof edit?.slideId !== 'string') return;
+    if (Array.isArray(edit.eraseIds) && edit.eraseIds.length <= 10000 && edit.eraseIds.every((id: unknown) => typeof id === 'string')) {
+      if (!state.editor.isDestroyed()) state.editor.webContents.send(IPC.presentAnnotation, { slideId: edit.slideId, eraseIds: edit.eraseIds });
+      return;
+    }
     const stroke = ElementSchema.safeParse(edit.stroke);
     if (!stroke.success || stroke.data.type !== 'shape' || stroke.data.shape !== 'path') return;
     if (!state.editor.isDestroyed()) state.editor.webContents.send(IPC.presentAnnotation, { slideId: edit.slideId, stroke: stroke.data });

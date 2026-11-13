@@ -1,3 +1,4 @@
+import { withoutInk } from '@shared/annotations.js';
 import type { Deck, ShapeEl } from '@shared/deck.js';
 import type { PresentationCommand, PresentationState } from '@shared/ipc.js';
 import { resolveState } from '@shared/timeline.js';
@@ -26,6 +27,7 @@ export interface SpeakerViewOptions {
   host: HTMLElement;
   resolveSrc: (src: string) => string;
   onCommand: (command: PresentationCommand) => void;
+  onErase?: (slideId: string, ids: string[]) => void;
   onAnnotation?: (slideId: string, stroke: ShapeEl) => void;
   onNotesChange?: (slideId: string, notes: string) => void;
   /**
@@ -159,6 +161,11 @@ export function createSpeakerView(options: SpeakerViewOptions): SpeakerView {
       return slide && deck && !state.blanked ? { slide, canvas: deck.canvas } : null;
     },
     onOverlay: (overlay) => onCommand({ type: 'annotationOverlay', overlay }),
+    erase: (slideId, ids) => {
+      if (!deck) return;
+      deck = { ...deck, slides: deck.slides.map((slide) => slide.id === slideId ? withoutInk(slide, ids) : slide) };
+      render(); options.onErase?.(slideId, ids);
+    },
     save: (slideId, stroke) => {
       if (!deck) return;
       deck = { ...deck, slides: deck.slides.map((slide) => slide.id === slideId

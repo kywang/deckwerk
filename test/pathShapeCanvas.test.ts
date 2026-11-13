@@ -380,6 +380,19 @@ describe('editing a path\'s points', () => {
 });
 
 describe('drawing with the pencil', () => {
+  it('erases a drawn stroke as one undoable editor operation', () => {
+    const { canvas, host, store } = setup();
+    canvas.startPencil();
+    drag(host, { x: 100, y: 100 }, { x: 300, y: 100 });
+    expect(store.slide!.elements).toHaveLength(1);
+    canvas.toggleEraser();
+    const stage = host.querySelector('.stage')!;
+    drag(host, { x: 200, y: 50, target: stage }, { x: 200, y: 150 });
+    expect(store.slide!.elements).toHaveLength(0);
+    store.undo();
+    expect(store.slide!.elements).toHaveLength(1);
+  });
+
   it('keeps pressure-bearing pen samples even when Linux reports no button held', () => {
     const { canvas, host, store } = setup();
     canvas.startPencil();

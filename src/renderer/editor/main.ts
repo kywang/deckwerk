@@ -1,3 +1,5 @@
+import { button as toolButton } from './ui.js';
+import { withoutInk } from '@shared/annotations.js';
 import '../player/player.css';
 import '../appChrome.css';
 import './editor.css';
@@ -633,6 +635,14 @@ function buildToolbar(): void {
     }),
     createShapeInsertPicker(store),
     createPenButton(canvas),
+    (() => {
+      const eraser = toolButton('Eraser', () => canvas.toggleEraser(), { variant: 'quiet' });
+      eraser.title = 'Erase whole ink strokes';
+      eraser.classList.add('pen-tool-button');
+      eraser.setAttribute('aria-pressed', 'false');
+      canvas.onEraserChange = (active) => eraser.setAttribute('aria-pressed', String(active));
+      return eraser;
+    })(),
     createTableInsertPicker(store),
     createMediaButton(mediaHost),
   );
@@ -1750,7 +1760,13 @@ canvas.contextActions = makeContextActions(shellDeps, clipboard);
 // Watch mode: the main process reloads the deck when deck.json changes on
 // disk (an agent, a git checkout, hand editing) and broadcasts it here. Our
 // own saves echo back identical content and are ignored by comparison.
-window.api.onPresentAnnotation(({ slideId, stroke }) => {
+window.api.onPresentAnnotation(({ slideId, stroke, eraseIds }) => {
+  if (eraseIds) {
+    store.commit((deck) => { deck.slides = deck.slides.map((slide) => slide.id === slideId ? withoutInk(slide, eraseIds) : slide); }, { label: 'Erase ink' });
+    void save().catch((error) => setStatusMessage(String(error)));
+    return;
+  }
+  if (!stroke) return;
   const slide = store.get().deck.slides.find((item) => item.id === slideId);
   if (!slide || slide.elements.some((item) => item.id === stroke.id)) return;
   store.commit((deck) => {

@@ -1,5 +1,5 @@
 import type { ShapeEl, Slide } from '@shared/deck.js';
-import { annotationStroke } from '@shared/annotations.js';
+import { annotationStroke, erasedStrokeIds } from '@shared/annotations.js';
 import type { XY } from '@shared/pathNodes.js';
 import type { AnnotationOverlay } from '@shared/ipc.js';
 import { button } from '../editor/ui.js';
@@ -8,7 +8,7 @@ import { LiveInk } from './liveInk.js';
 import { makeId } from '@shared/geometry.js';
 import './annotationTools.css';
 
-type Mode = 'navigate' | 'pen' | 'laser';
+type Mode = 'navigate' | 'pen' | 'laser' | 'eraser';
 export const LASER_HOLD_MS = 500;
 const HOLD_SLOP_PX = 8;
 export const PEN_COLORS = [
@@ -29,7 +29,7 @@ function storedPenStyle(): PenStyle {
   } catch { return { color: '#e53935', width: 4 }; }
 }
 interface PointerGesture {
-  id: number; slideId: string; points: XY[]; kind: 'ink' | 'waiting' | 'laser';
+  id: number; slideId: string; points: XY[]; kind: 'ink' | 'waiting' | 'laser' | 'erase';
   origin: XY; timer: ReturnType<typeof setTimeout> | null;
   pen: PenStyle;
   stream: string;
@@ -40,6 +40,7 @@ export interface AnnotationToolsOptions {
   onOverlay?: (overlay: AnnotationOverlay) => void;
   slide(): { slide: Slide; canvas: { w: number; h: number } } | null;
   /** Commit through the editor/collaboration store, never overwrite the deck. */
+  erase?(slideId: string, ids: string[]): void;
   save(slideId: string, stroke: ShapeEl): void;
 }
 
@@ -81,10 +82,10 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   toolbar.className = 'annotation-toolbar';
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', 'Presentation tools');
-  const controls = (['navigate', 'pen', 'laser'] as const).map((value) => {
-    const label = { navigate: 'Navigate', pen: 'Pen', laser: 'Laser' }[value];
+  const controls = (['navigate', 'pen', 'eraser', 'laser'] as const).map((value) => {
+    const label = { navigate: 'Navigate', pen: 'Pen', eraser: 'Eraser', laser: 'Laser' }[value];
     const control = button(label, () => setMode(value), { variant: 'quiet' });
-    control.title = value === 'pen' ? 'Draw and save annotations (P). Hold still for a temporary laser.'
+    control.title = value === 'eraser' ? 'Erase whole ink strokes (E)' : value === 'pen' ? 'Draw and save annotations (P). Hold still for a temporary laser.'
       : value === 'laser' ? 'Laser pointer (L); hold Ctrl to point temporarily' : 'Navigate slides (V)';
     control.dataset.annotationMode = value;
     toolbar.append(control);
@@ -217,12 +218,19 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   }
   const pointLaser = (point: XY): void => { laserPoint = point; schedule(); };
   const down = (event: PointerEvent): void => {
-    if (isToolEvent(event) || event.button !== 0) return;
+    if (isToolEvent(event) || (event.button !== 0 && !(event.pointerType === 'pen' && event.button === 5))) return;
     if (active) { consume(event); return; }
     suppressNextClick = false;
     if (remote) {
       remote = null; remotePoints = []; remoteStream = null; remotePainted = 0;
       painted = sent = 0; projection = null; ink.clear();
+    }
+    if (mode === 'eraser' || (event.pointerType === 'pen' && event.button === 5)) {
+      const state = options.slide(); const point = position(event);
+      if (!state || !point) return;
+      consume(event); host.setPointerCapture(event.pointerId);
+      active = { id: event.pointerId, slideId: state.slide.id, points: [point], kind: 'erase', origin: point, timer: null, pen: { ...pen }, stream: '' };
+      return;
     }
     if (mode === 'laser' || event.ctrlKey) { consume(event); move(event); return; }
     if (mode === 'navigate' && (slideLinkFromEvent(event) || eventOnInteractiveWeb(event)
@@ -264,6 +272,7 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
     if (active) {
       if (event.pointerId !== active.id) { consume(event); return; }
       if (options.slide()?.slide.id !== active.slideId) { cancel(); return; }
+      if (active.kind === 'erase') { consume(event); const point = position(event); if (point) active.points.push(point); return; }
       if (active.kind === 'laser') {
         consume(event);
         pointLaser({ x: event.clientX, y: event.clientY });
@@ -292,12 +301,17 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   };
   const up = (event: PointerEvent): void => {
     if (!active || event.pointerId !== active.id) return;
-    if (active.kind !== 'waiting' || mode === 'pen') consume(event);
+    if (active.kind !== 'waiting' || mode === 'pen' || mode === 'eraser') consume(event);
     const point = position(event);
     if (point) active.points.push(point);
     const draft = active;
     const state = options.slide();
     cancel();
+    if (draft.kind === 'erase' && state?.slide.id === draft.slideId) {
+      const ids = erasedStrokeIds(state.slide, draft.points, 12 * state.canvas.w / (host.querySelector('.stage')?.getBoundingClientRect().width || state.canvas.w));
+      if (ids.length) options.erase?.(draft.slideId, ids);
+      return;
+    }
     if (draft.kind !== 'ink' || state?.slide.id !== draft.slideId) return;
     const stroke = annotationStroke(state.slide, draft.points, draft.pen.color, draft.pen.width);
     if (stroke) options.save(draft.slideId, stroke);
@@ -311,7 +325,7 @@ export function createAnnotationTools(options: AnnotationToolsOptions): {
   const key = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement | null;
     if (target?.isContentEditable || target?.closest?.('input, textarea, select') || event.metaKey || event.ctrlKey || event.altKey) return;
-    const next = ({ p: 'pen', l: 'laser', v: 'navigate' } as Record<string, Mode>)[event.key.toLowerCase()];
+    const next = ({ p: 'pen', e: 'eraser', l: 'laser', v: 'navigate' } as Record<string, Mode>)[event.key.toLowerCase()];
     if (next) { consume(event); setMode(mode === next ? 'navigate' : next); }
     else if (event.key === 'Escape' && (mode !== 'navigate' || active)) { consume(event); setMode('navigate'); }
   };

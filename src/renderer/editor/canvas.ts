@@ -1,3 +1,4 @@
+import { erasedStrokeIds, withoutInk } from '@shared/annotations.js';
 import { LiveInk } from '../player/liveInk.js';
 import { openContextMenu } from './contextMenuPlacement.js';
 import type { Deck, ShapeEl, Slide, SlideElement, TextEl } from '@shared/deck.js';
@@ -2909,7 +2910,55 @@ export class EditorCanvas {
     return { x: (ev.clientX - r.left) / scale, y: (ev.clientY - r.top) / scale };
   }
 
+  private eraserMode = false;
+  onEraserChange?: (active: boolean) => void;
+  toggleEraser(): void {
+    const next = !this.eraserMode;
+    this.endDrawingModes();
+    this.eraserMode = next;
+    this.onEraserChange?.(next);
+    this.notice(next ? 'Drag over ink to erase whole strokes; Escape when done.' : 'Eraser off');
+  }
+
   private bindPointer(): void {
+    let erasing: { id: number; slideId: string; points: XY[]; scale: number } | null = null;
+    const stop = (event: PointerEvent): void => { event.preventDefault(); event.stopImmediatePropagation(); };
+    this.host.addEventListener('pointerdown', (event) => {
+      if (!this.eraserMode && !(event.pointerType === 'pen' && event.button === 5)) return;
+      if (erasing) { stop(event); return; }
+      if ((event.button !== 0 && event.button !== 5) || !(event.target as Element).closest('.stage') || !this.store.slide) return;
+      stop(event);
+      erasing = { id: event.pointerId, slideId: this.store.slide.id, points: [this.toCanvas(event)], scale: this.scale };
+      this.host.setPointerCapture(event.pointerId);
+    }, true);
+    this.host.addEventListener('pointermove', (event) => {
+      if (!erasing) return;
+      stop(event);
+      if (event.pointerId !== erasing.id) return;
+      const samples = event.getCoalescedEvents?.() ?? [];
+      for (const sample of samples) erasing.points.push(this.toCanvas(sample));
+      erasing.points.push(this.toCanvas(event));
+    }, true);
+    this.host.addEventListener('pointerup', (event) => {
+      if (!erasing || erasing.id !== event.pointerId) return;
+      stop(event);
+      const draft = erasing; erasing = null;
+      if (this.host.hasPointerCapture?.(event.pointerId)) this.host.releasePointerCapture(event.pointerId);
+      const slide = this.store.slide;
+      if (!slide || slide.id !== draft.slideId) return;
+      draft.points.push(this.toCanvas(event));
+      const ids = erasedStrokeIds(slide, draft.points, 12 / draft.scale);
+      if (ids.length) this.store.commit((deck) => {
+        deck.slides = deck.slides.map((item) => item.id === draft.slideId ? withoutInk(item, ids) : item);
+      }, { label: 'Erase ink' });
+    }, true);
+    const cancel = (): void => { erasing = null; };
+    this.host.addEventListener('pointercancel', (event) => { if (event.pointerId === erasing?.id) cancel(); }, true);
+    this.host.addEventListener('lostpointercapture', (event) => { if (event.pointerId === erasing?.id) cancel(); }, true);
+    window.addEventListener('blur', cancel);
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && this.eraserMode) { cancel(); this.eraserMode = false; this.onEraserChange?.(false); }
+    }, true);
     this.host.addEventListener('pointerdown', (ev) => {
       // A stylus is a freehand pen; ignore palm contacts during its stroke.
       if (this.pencilPointerId !== null && ev.pointerId !== this.pencilPointerId) return;
@@ -4156,6 +4205,7 @@ export class EditorCanvas {
 
   /** What the pen and pencil leave behind when another mode, or the other of the two, starts. */
   private endDrawingModes(): void {
+    this.eraserMode = false; this.onEraserChange?.(false);
     if (this.editingId) this.endTextEditing(true);
     if (this.maskingId) this.toggleMaskMode(null);
     this.endWebLive();

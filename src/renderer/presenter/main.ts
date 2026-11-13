@@ -22,6 +22,7 @@ const view = createSpeakerView({
   host: document.getElementById('root')!,
   resolveSrc: (src) => window.api.assetUrl(src),
   onCommand: (command) => window.api.sendPresentCommand(command),
+  onErase: (slideId, ids) => window.api.erasePresentAnnotations(slideId, ids),
   onAnnotation: (slideId, stroke) => window.api.editPresentAnnotation(slideId, stroke),
   onNotesChange: (slideId, notes) => window.api.editPresentNotes(slideId, notes),
 });

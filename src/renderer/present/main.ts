@@ -1,3 +1,4 @@
+import { withoutInk } from '@shared/annotations.js';
 import '../player/player.css';
 import { createAnnotationTools } from '../player/annotationTools.js';
 import type { DeckSession } from '@shared/ipc.js';
@@ -133,6 +134,12 @@ function start(nextSession: DeckSession): void {
     slide: () => {
       const slide = session?.deck.slides[player!.getCursor().slide];
       return slide && session ? { slide, canvas: session.deck.canvas } : null;
+    },
+    erase: (slideId, ids) => {
+      if (!session || !player) return;
+      window.api.erasePresentAnnotations(slideId, ids);
+      session = { ...session, deck: { ...session.deck, slides: session.deck.slides.map((slide) => slide.id === slideId ? withoutInk(slide, ids) : slide) } };
+      player.setDeck(session.deck);
     },
     save: (slideId, stroke) => {
       if (!session || !player) return;

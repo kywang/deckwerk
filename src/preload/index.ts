@@ -241,7 +241,8 @@ const api = {
     on(IPC.presentState, fn),
   editPresentAnnotation: (slideId: string, stroke: ShapeEl): void =>
     ipcRenderer.send(IPC.presentAnnotation, { slideId, stroke }),
-  onPresentAnnotation: (fn: (edit: { slideId: string; stroke: ShapeEl }) => void): (() => void) =>
+  erasePresentAnnotations: (slideId: string, eraseIds: string[]): void => ipcRenderer.send(IPC.presentAnnotation, { slideId, eraseIds }),
+  onPresentAnnotation: (fn: (edit: { slideId: string; stroke?: ShapeEl; eraseIds?: string[] }) => void): (() => void) =>
     on(IPC.presentAnnotation, fn),
   editPresentNotes: (slideId: string, notes: string): void =>
     ipcRenderer.send(IPC.presentNotesEdit, { slideId, notes }),

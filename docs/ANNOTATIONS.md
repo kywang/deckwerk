@@ -96,3 +96,13 @@ animation-frame wait. Saved strokes and PDF export retain the original samples.
 If a 4K monitor runs at 30 Hz, try 1920×1080 at 60 Hz in Ubuntu's display
 settings. The Surface Go has less display work to do and the monitor can refresh
 more often. Rerun your `xinput map-to-output` commands after changing the layout.
+
+### Eraser
+
+Choose **Eraser** in the editor or presentation toolbar (including Presenter
+View). Tap a stroke or drag across several, then lift to remove the whole
+strokes as one undoable edit. The eraser targets unfilled vector paths and
+leaves text, images and filled shapes intact. Erasing is saved to the deck, so
+subsequent PDF exports reflect it. Undo in the editor restores erased strokes.
+Presentation shortcut: **E**. **P** returns to Pen. A stylus eraser tip is also
+supported when the driver exposes the standard eraser button.

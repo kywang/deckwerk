@@ -1,3 +1,4 @@
+import { withoutInk } from '@shared/annotations.js';
 import '../player/player.css';
 import '../player/type.css';
 import '../appChrome.css';
@@ -349,6 +350,11 @@ function mountAudience(): void {
       const slide = deck?.slides[player!.getCursor().slide];
       return slide && deck ? { slide, canvas: deck.canvas } : null;
     },
+    erase: (slideId, ids) => {
+      if (!deck) return;
+      const nextDeck = { ...deck, slides: deck.slides.map((slide) => slide.id === slideId ? withoutInk(slide, ids) : slide) };
+      bridge.localEdit(deck, nextDeck, 'Erase ink'); applyDeck(nextDeck, null, 'session');
+    },
     save: (slideId, stroke) => {
       if (!deck) return;
       const nextDeck = { ...deck, slides: deck.slides.map((slide) =>
@@ -413,6 +419,11 @@ function mountSpeaker(): void {
     host: speakerHost,
     resolveSrc,
     onCommand: sendCommand,
+    onErase: (slideId, ids) => {
+      if (!deck) return;
+      const nextDeck = { ...deck, slides: deck.slides.map((slide) => slide.id === slideId ? withoutInk(slide, ids) : slide) };
+      bridge.localEdit(deck, nextDeck, 'Erase ink'); applyDeck(nextDeck, null, 'session');
+    },
     onAnnotation: (slideId, stroke) => {
       if (!deck) return;
       const nextDeck = { ...deck, slides: deck.slides.map((slide) => slide.id === slideId

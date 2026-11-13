@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyDeck, parseDeck, type ShapeEl } from '../src/shared/deck.js';
-import { annotationStroke } from '../src/shared/annotations.js';
+import { annotationStroke, erasedStrokeIds, withoutInk } from '../src/shared/annotations.js';
 import { pathOnCanvas } from '../src/shared/pathNodes.js';
 import type { AnnotationOverlay } from '../src/shared/ipc.js';
 import { createAnnotationTools, PEN_COLORS, PEN_WIDTHS } from '../src/renderer/player/annotationTools.js';
@@ -35,8 +35,9 @@ function setup(onOverlay?: (overlay: AnnotationOverlay) => void) {
   host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 600 }) as DOMRect;
   host.firstElementChild!.getBoundingClientRect = () => ({ left: 20, top: 30, width: 960, height: 540 }) as DOMRect;
   let current = 0;
+  const erase = vi.fn((slideId: string, ids: string[]) => { const slide = deck.slides.find((s) => s.id === slideId)!; slide.elements = slide.elements.filter((el) => !ids.includes(el.id)); });
   const save = vi.fn((slideId: string, stroke: ShapeEl) => deck.slides.find((s) => s.id === slideId)!.elements.push(stroke));
-  const tools = createAnnotationTools({ host, onOverlay, slide: () => ({ slide: deck.slides[current], canvas: deck.canvas }), save });
+  const tools = createAnnotationTools({ host, onOverlay, slide: () => ({ slide: deck.slides[current], canvas: deck.canvas }), save, erase });
   destroy = tools.destroy;
   const pointer = (type: string, x: number, y: number, id = 1, pointerType = 'mouse', ctrlKey = false) => {
     const event = new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: id, button: 0, ctrlKey });
@@ -46,10 +47,43 @@ function setup(onOverlay?: (overlay: AnnotationOverlay) => void) {
     return event;
   };
   const choose = (mode: string) => host.querySelector<HTMLButtonElement>(`[data-annotation-mode="${mode}"]`)!.click();
-  return { deck, host, tools, save, pointer, choose, next: () => { current++; } };
+  return { deck, host, tools, save, erase, pointer, choose, next: () => { current++; } };
 }
 
 describe('presentation annotation tools', () => {
+  it('preserves filled artwork even if its ID is submitted for removal', () => {
+    const deck = emptyDeck('Protected artwork');
+    const slide = deck.slides[0];
+    const stroke = annotationStroke(slide, [{ x: 0, y: 0 }, { x: 100, y: 0 }])!;
+    const filled = { ...stroke, id: 'filled', fill: '#ffffff' };
+    slide.elements = [stroke, filled];
+    expect(erasedStrokeIds(slide, [{ x: 50, y: 0 }])).toEqual([stroke.id]);
+    expect(withoutInk(slide, [stroke.id, filled.id]).elements).toEqual([filled]);
+  });
+
+  it('erases crossed ink strokes, suppresses navigation and never turns an eraser hold into a laser', () => {
+    vi.useFakeTimers();
+    const { deck, pointer, choose, erase, save, host } = setup();
+    pointer('pointerdown', 120, 130, 1, 'pen');
+    pointer('pointermove', 320, 130, 1, 'pen');
+    pointer('pointerup', 420, 130, 1, 'pen');
+    expect(deck.slides[0].elements).toHaveLength(1);
+    const id = deck.slides[0].elements[0].id;
+    choose('eraser');
+    pointer('pointerdown', 220, 100, 1, 'touch');
+    advance(800);
+    expect(host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(true);
+    pointer('pointermove', 220, 180, 1, 'touch');
+    pointer('pointerup', 220, 200, 1, 'touch');
+    expect(erase).toHaveBeenCalledWith(deck.slides[0].id, [id]);
+    expect(deck.slides[0].elements).toHaveLength(0);
+    expect(save).toHaveBeenCalledTimes(1);
+    pointer('pointerdown', 120, 130);
+    pointer('pointercancel', 120, 130);
+    pointer('pointerup', 220, 130);
+    expect(erase).toHaveBeenCalledTimes(1);
+  });
+
   it('paints frame-batched presenter ink immediately without adding an audience frame of latency', () => {
     const { host, tools, deck } = setup();
     tools.showOverlay({ slideId: deck.slides[0].id, points: [{ x: 100, y: 100 }, { x: 200, y: 150 }], laser: null,
@@ -278,7 +312,7 @@ describe('presentation annotation tools', () => {
     vi.useFakeTimers();
     const audience = setup();
     audience.tools.setToolbarVisible(false);
-    const { host, pointer, save, choose } = setup((overlay) => audience.tools.showOverlay(overlay));
+    const { host, pointer, save, choose, deck, erase } = setup((overlay) => audience.tools.showOverlay(overlay));
     let seed = 8317;
     let expectedInk = 0;
     for (let step = 0; step < 60; step++) {
@@ -303,6 +337,13 @@ describe('presentation annotation tools', () => {
       pointer('pointerup', 500, 300, 1, device);
       pointer('click', 500, 300, 1, device);
       advance(600);
+      if (step % 7 === 0 && deck.slides[0].elements.length) {
+        choose('eraser');
+        pointer('pointerdown', 100, 100);
+        pointer('pointermove', 500, 300);
+        pointer('pointerup', 500, 300);
+        expect(erase).toHaveBeenCalled();
+      }
       expect(save).toHaveBeenCalledTimes(expectedInk);
       if (action === 1) expect(save.mock.calls.at(-1)![1]).toMatchObject({ stroke: color.value, strokeWidth: Number(width.value) });
       expect(host.querySelector<HTMLElement>('.presentation-laser')!.hidden).toBe(true);

@@ -282,5 +282,16 @@ describe.skipIf(!electronBinary)('saved presentation annotations', () => {
     expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
     expect((await loadDeck(deckDir)).slides[0].elements).toHaveLength(1);
     await writeFile(join(tmpdir(), `deckwerk-annotations-${backend}.pdf`), bytes);
+    // Erase from each real presentation surface and verify the persisted deck.
+    await driver.click('[data-annotation-mode="eraser"]');
+    await driver.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...points[1], button: 'left', buttons: 1, clickCount: 1 });
+    await driver.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...points[1], button: 'left', buttons: 0, clickCount: 1 });
+    await eventually(async () => (await loadDeck(deckDir)).slides[0].elements.length, 'eraser did not persist removal', (count) => count === 0);
+    await eventually(() => audience.evaluate<number>(`document.querySelectorAll('.stage [data-element-id^="ink"]').length`), 'audience retained erased ink', (count) => count === 0);
+    if (editor) {
+      await editor.chord('z', 'KeyZ', 90, process.platform === 'darwin' ? 4 : 2);
+      await eventually(async () => (await loadDeck(deckDir)).slides[0].elements.length, 'erasure did not undo', (count) => count === 1);
+    }
+
   }, 180_000);
 });
